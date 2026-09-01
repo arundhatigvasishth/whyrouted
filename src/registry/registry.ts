@@ -18,8 +18,9 @@ import type {
   RegistrySnapshot,
 } from "../types.js";
 import { initialRuntime } from "../types.js";
+import type { RegistryStore } from "./types.js";
 
-export class Registry {
+export class Registry implements RegistryStore {
   private readonly replicas = new Map<string, ReplicaState>();
 
   /**
