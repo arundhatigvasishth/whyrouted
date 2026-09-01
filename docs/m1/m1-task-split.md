@@ -115,6 +115,10 @@ own unit tests, half of every joint task. Balanced.
 This applies to **code and implementation work**. Planning docs like this one and
 the milestone idea docs land directly on `main` — they're not code to review.
 
+**This working agreement carries forward to every later milestone's task split.**
+Assume it's in force for M2, M3, … unless we explicitly change it in that
+milestone's doc.
+
 **All code lands through a pull request. No direct code commits to `main`.**
 
 ### Branches
@@ -135,7 +139,10 @@ the milestone idea docs land directly on `main` — they're not code to review.
   - Avoid: `feat(replica): implement health endpoint`
 - Body is optional — add a line or two only when the "why" isn't obvious from
   the change.
-- Co-author trailer stays (the tooling adds it).
+- **No AI co-author trailers.** Commits are attributed to us only. If any tool
+  (Claude Code, Copilot, etc.) appends `Co-Authored-By:` or a session/trace
+  line, strip it before the commit lands. Applies to every branch and to the
+  planning docs on `main`.
 
 ### Pull requests
 The commits are casual; **the PR description is where the real explanation goes**,
