@@ -1,11 +1,11 @@
-# M1 Shared Contract (J1 + J2) — DRAFT for sign-off
+# M1 Shared Contract (J1 + J2)
 
-**Status:** draft by Junaid, awaiting joint sign-off with Arundhati
+**Status:** signed off by Junaid and Arundhati (2026-09-01).
 **Covers:** the adapter interface (J1), the shared domain types (J2), the config
 shape, and the `GET /status` response shape — everything both tracks build against.
 
-Once signed off: Junaid lands `src/adapter/types.ts`, Arundhati lands `src/types.ts`,
-then the two tracks split off in parallel.
+Landed as: `src/types.ts` (Arundhati, J2) and `src/adapter/types.ts` (Junaid, J1).
+Changes after this point go through a PR that touches both this doc and the file.
 
 ---
 
@@ -25,11 +25,11 @@ export interface Replica {
  *  written by the health scheduler on each poll. */
 export interface ReplicaRuntime {
   health: ReplicaHealth;
-  inFlight: number;               // replica's self-reported in-flight count
-  latencyMs: number | null;       // last health-probe round-trip; null before first probe
+  inFlight: number;               // replica's self-reported in-flight count (0 when last probe failed)
+  latencyMs: number | null;       // last *successful* probe round-trip; null if no valid measurement (never probed, or last probe failed)
   consecFailures: number;         // consecutive failed probes (resets on success)
   consecSuccesses: number;        // consecutive successful probes (resets on failure)
-  lastCheckedAt: string | null;   // ISO 8601; null before first probe
+  lastCheckedAt: string | null;   // ISO 8601 of last probe attempt (success or failure); null before first probe
 }
 
 /** A replica plus its live runtime — the unit the registry stores and /status returns. */
@@ -82,6 +82,12 @@ export interface ReplicaAdapter {
 maps to a URL is an implementation detail of `src/adapter/http.ts` — it's
 constructed with the `Replica[]` list (or an `id→url` map) from config. No caller
 needs to know URLs.
+
+**`HealthResult` → `ReplicaRuntime` mapping (done by the scheduler):** on a failed
+probe (`alive: false`) the scheduler writes `latencyMs: null` and `inFlight: 0`
+into the runtime — the timeout value that `HealthResult.latencyMs` carries on
+failure is *not* persisted. `latencyMs` in the runtime only ever holds a real
+successful round-trip.
 
 ---
 
@@ -138,7 +144,7 @@ Body is a `RegistrySnapshot` verbatim, `200 OK`, `application/json`. Example:
       "runtime": {
         "health": "unhealthy",
         "inFlight": 0,
-        "latencyMs": 500,
+        "latencyMs": null,
         "consecFailures": 4,
         "consecSuccesses": 0,
         "lastCheckedAt": "2026-09-01T16:19:59.500Z"
@@ -163,16 +169,16 @@ Listed here so both sides agree what the replica exposes. Junaid builds it in A1
 
 ---
 
-## Sign-off checklist (the ~15-min joint call)
+## Sign-off checklist — all agreed 2026-09-01
 
-- [ ] `ReplicaHealth` values: `healthy | unhealthy | unknown` — agreed?
-- [ ] `checkHealth` **always resolves** (never rejects); failure → `{ alive: false, latencyMs: timeout, inFlight: 0 }` — agreed?
-- [ ] `sendRequest` **rejects** on failure — agreed? (nobody calls it in M1 anyway)
-- [ ] `response: unknown` passthrough (not typed) for M1 — agreed?
-- [ ] `latencyMs` / `lastCheckedAt` nullable before first probe — agreed?
-- [ ] Ports: replicas `8001+`, status `8080` — agreed?
-- [ ] Thresholds: N = 3, M = 2 as starting values (tuned for real at M3) — agreed?
-- [ ] Modules take narrow options objects; only `main.ts` sees the whole `Config` — agreed?
+- [x] `ReplicaHealth` values: `healthy | unhealthy | unknown`
+- [x] `checkHealth` **always resolves** (never rejects); on failure → `{ alive: false, latencyMs: timeout, inFlight: 0 }` (the timeout value is the adapter's raw result; the scheduler does not persist it — see the mapping note under J1)
+- [x] `sendRequest` **rejects** on failure (nobody calls it in M1 anyway)
+- [x] `response: unknown` passthrough (not typed) for M1
+- [x] `latencyMs`: `null` means "no valid measurement" — covers never-probed AND last-probe-failed (not the timeout value). `lastCheckedAt`: set on every probe attempt, `null` only before the first.
+- [x] Ports: replicas `8001+`, status `8080`
+- [x] Thresholds: N = 3, M = 2 as starting values (tuned for real at M3)
+- [x] Modules take narrow options objects; only `main.ts` sees the whole `Config`
 
-Anything that changes here, edit in this doc during the call so the landed files
-match. Then: Junaid → `src/adapter/types.ts`, Arundhati → `src/types.ts`.
+Any change after sign-off goes through a PR that updates this doc and the affected
+file (`src/types.ts` / `src/adapter/types.ts`) together.
