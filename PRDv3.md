@@ -1,6 +1,6 @@
 # **whyrouted — Product Requirements Document (v3)**
 
-**Authors:** Arundhati Vasishth, Junaid Pathan **Status:** Draft v2 **Last updated:** August 2026
+**Authors:** Arundhati Vasishth, Junaid Pathan **Status:** Draft v3 — open questions resolved, M1 scoped **Last updated:** September 2026
 
 ---
 
@@ -202,15 +202,24 @@ Phase 1 implements these against simulated replicas with fluctuating synthetic l
 
 **Demo definition of done:** On a live Kubernetes cluster, kill a replica, watch traffic reroute with zero failed requests, then use an MCP client to ask why a specific request went where it did and get a correct, grounded answer — then use the same client to drain a struggling replica and watch the dashboard reflect it in real time.
 
+### **M1 Implementation Notes**
+
+Decisions made ahead of M1 kickoff (registry + health scheduler + simulated replicas):
+
+* **Simulated replicas are real, separate local HTTP processes** (each its own server on its own port with a `/health` endpoint), not in-process fake objects. This is the load-bearing choice: it's what makes the Phase 2 swap to real Ollama/vLLM replicas an adapter swap rather than a transport-layer rewrite, preserving the "no routing/health/MCP code changes between phases" bet in Section 6.  
+* **Fault injection starts simple:** a replica is either fully up or fully down (kill/revive), no partial degradation. Sufficient for M3's zero-loss failover demo; richer failure modes (latency spikes, flapping, partial errors) are deferred until the core failover loop is proven.  
+* **M1 runs as a single Node/TypeScript process** (registry, health scheduler, and a `GET /status` endpoint all together), not yet split into separate services. Health-checking logic is written as its own internal module so extracting it into a separate service later (matching the Section 6 diagram) is a small refactor, not a rewrite — deferred until Docker/K8s (M7/M8) exist to manage that coordination.  
+* **Default simulated fleet size:** 4 replicas, configurable — enough to demonstrate load distribution and a clean single-replica failover without noise.
+
 ---
 
-## **10\. Open Questions**
+## **10\. Key Decisions (formerly Open Questions)**
 
-* Scoring weights for load vs. latency — fixed, configurable, or self-tuning from observed outcomes? (Now directly answerable via `set_scoring_weights` — decide default behavior.)  
-* Should the MCP query tool support aggregate questions ("what happened to p99 between 3:00 and 3:10?") in v1, or only per-request questions?  
-* Retry policy: how many replicas deep before returning an error to the client?  
-* Is queue depth a better load signal than in-flight count for LLM workloads with variable token counts?  
-* Do we deploy real replicas (Ollama/vLLM) on EKS for the final demo, or keep Phase 2 local and only deploy the simulated version to the cluster? (Cost/time tradeoff — decide by M7.)
+* **Scoring weights for load vs. latency.** → Fixed sane defaults at startup (e.g. 0.5/0.5), live-adjustable via `set_scoring_weights`. No self-tuning in v1 — that's a research-scoped feature (needs an objective function, oscillation guardrails) that doesn't match the project's other non-goals (no autoscaling, no production-scale benchmarking).  
+* **Aggregate vs. per-request NL queries.** → `query_decisions` supports **both** in v1: per-request lookups (e.g. "why did request X go where it did") and aggregate stats over a time range (e.g. "what happened to p99 between 3:00 and 3:10?"). The decision log design must support range queries and percentile computation, not just point lookups.  
+* **Retry policy.** → Up to 2 retries against the next-best replica (3 attempts total) before returning an error to the client. Bounded to avoid cascading load onto already-struggling replicas during a correlated failure; comfortably covers the "zero loss on single-replica failure" success metric without unbounded retries.  
+* **Load signal: queue depth vs. in-flight count.** → In-flight count only for v1. Directly available from the adapter interface (`checkHealth` returns `inFlight`) with no extra plumbing; queue depth isn't uniformly exposed by real replica backends (Ollama/vLLM), so building around it now would complicate the Phase 2 adapter swap. Revisit if load distribution misbehaves under bursty synthetic load (success metric: no replica \> 1.5× median utilization).  
+* **Real replicas (Ollama/vLLM) on EKS.** → **No** — Phase 2 stays local-only. Only the simulated fleet gets deployed to EKS for the final demo. Real inference servers need GPU/beefy nodes, real model weights, and real cost/time that don't serve the project's actual differentiator (routing, failover, explainability via MCP); the simulated adapter already exercises the same interface, so EKS still proves the infrastructure pattern.
 
 ---
 
