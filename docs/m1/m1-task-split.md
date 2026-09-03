@@ -143,13 +143,21 @@ milestone's doc.
   (Claude Code, Copilot, etc.) appends `Co-Authored-By:` or a session/trace
   line, strip it before the commit lands. Applies to every branch and to the
   planning docs on `main`.
+- **No task IDs in commit messages.** `J6`, `B4`, `A1–A3` and the like are
+  planning shorthand for this doc only — they mean nothing in the git history
+  once the milestone is closed. Say what the change does in plain words.
 
 ### Pull requests
 The commits are casual; **the PR description is where the real explanation goes**,
-because that's what the other person reviews against. Every PR includes:
+because that's what the other person reviews against.
+
+**PR titles and descriptions use plain words, not task IDs** — no `J6` / `B4` /
+`A1–A3` in the title or the body. The mapping to this doc's tasks lives here, not
+in GitHub. Every PR includes:
 
 1. **What this does** — one paragraph, plain English.
-2. **Why** — which M1 task(s) from this doc (e.g. "A1–A3"), and how it fits the seam.
+2. **Why** — what part of the fleet foundation this is, in plain words, and how
+   it fits the seam.
 3. **How it works** — the key design choices a reviewer needs to follow the code:
    module boundaries, data shapes, anything non-obvious. Call out anything that
    touches the shared contract (`src/adapter/types.ts`, `src/types.ts`).
@@ -185,4 +193,4 @@ group per PR, not a whole track in one go.
 - No flapping on an alternating pass/fail replica.
 - Unit + integration tests green in CI (GitHub Actions: install, build, test).
 - README documents setup, run, and the kill/revive demo.
-- Both authors have signed off in J6.
+- Both authors have signed off in the architecture review.
