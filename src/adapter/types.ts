@@ -6,7 +6,7 @@
  * replicas (A6, `src/adapter/http.ts`); Phase 2 swaps in a real one (Ollama /
  * vLLM) behind the same interface, with no changes above this boundary.
  *
- * Signed off jointly in docs/m1/m1-shared-contract.md before either track
+ * Signed off jointly in docs/milestones/m1/shared-contract.md before either track
  * started. No behaviour here — the shape only.
  */
 

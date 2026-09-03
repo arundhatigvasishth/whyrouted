@@ -6,7 +6,7 @@
  * nothing above the adapter boundary changes — that swap is the project's core
  * architectural bet (PRD §6).
  *
- * HTTP surface (docs/m1/m1-shared-contract.md, "Simulated replica HTTP surface"):
+ * HTTP surface (docs/milestones/m1/shared-contract.md, "Simulated replica HTTP surface"):
  *   GET  /health        -> 200 { inFlight }            — liveness + self-reported load
  *   POST /infer          -> 200 { response, latencyMs } — synthetic inference call
  *   POST /admin/kill     -> 200 { killed: true }        — start failing every request

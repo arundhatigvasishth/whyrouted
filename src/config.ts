@@ -5,7 +5,7 @@
  * fills in defaults, and validates. `main.ts` (J3) calls `loadConfig()` once at
  * startup and passes narrow slices down — no other module imports `Config`.
  *
- * Shape and defaults are fixed by docs/m1/m1-shared-contract.md.
+ * Shape and defaults are fixed by docs/milestones/m1/shared-contract.md.
  */
 
 import type { Replica } from "./types.js";

@@ -5,7 +5,7 @@
  * real HTTP. Phase 2 replaces this file with an Ollama / vLLM adapter and
  * nothing above the boundary changes.
  *
- * Behaviour is fixed by docs/m1/m1-shared-contract.md:
+ * Behaviour is fixed by docs/milestones/m1/shared-contract.md:
  *   - checkHealth NEVER rejects; a failed probe resolves
  *     `{ alive: false, latencyMs: <timeout>, inFlight: 0 }`
  *   - sendRequest REJECTS on transport failure, timeout, or non-2xx
