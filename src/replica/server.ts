@@ -7,11 +7,16 @@
  * architectural bet (PRD §6).
  *
  * HTTP surface (docs/m1/m1-shared-contract.md, "Simulated replica HTTP surface"):
- *   GET  /health  -> 200 { inFlight }        — liveness + self-reported load
- *   POST /infer   -> 200 { response, latencyMs } — synthetic inference call
+ *   GET  /health        -> 200 { inFlight }            — liveness + self-reported load
+ *   POST /infer          -> 200 { response, latencyMs } — synthetic inference call
+ *   POST /admin/kill     -> 200 { killed: true }        — start failing every request
+ *   POST /admin/revive   -> 200 { killed: false }       — recover
+ *
+ * Kill is binary — a killed replica answers /health and /infer with 503 (no
+ * partial degradation). That's all M3's failover demo needs; richer failure
+ * modes come later.
  *
  * Not here yet:
- *   - POST /admin/kill, POST /admin/revive   — kill / revive switch
  *   - spawning a fleet of these              — src/replica/launch.ts
  */
 
@@ -54,13 +59,33 @@ export function createReplicaApp(id: string, profile?: SyntheticProfile): Expres
 
   /** Concurrent /infer calls in progress right now. */
   let inFlight = 0;
+  /** When true, every /health and /infer call fails with 503. */
+  let killed = false;
 
   app.get("/health", (_req, res) => {
+    if (killed) {
+      res.status(503).json({ error: "killed" });
+      return;
+    }
     // real concurrent load plus the replica's slow synthetic baseline
     res.json({ inFlight: inFlight + synthetic.baselineLoad() });
   });
 
+  app.post("/admin/kill", (_req, res) => {
+    killed = true;
+    res.json({ killed });
+  });
+
+  app.post("/admin/revive", (_req, res) => {
+    killed = false;
+    res.json({ killed });
+  });
+
   app.post("/infer", async (_req, res) => {
+    if (killed) {
+      res.status(503).json({ error: "killed" });
+      return;
+    }
     inFlight += 1;
     const startedAt = performance.now();
     try {
