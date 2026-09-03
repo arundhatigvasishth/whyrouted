@@ -43,7 +43,9 @@ async function main(): Promise<void> {
 
   const fleet: RunningFleet = launchFleet(config);
   await Promise.all(replicas.map((r) => waitUntilReachable(r.url, 5000)));
-  console.log(`fleet up: ${fleet.members.length} replicas on ${config.host}:${config.basePort}-${config.basePort + fleet.members.length - 1}`);
+  console.log(
+    `fleet up: ${fleet.members.length} replicas on ${config.host}:${config.basePort}-${config.basePort + fleet.members.length - 1}`,
+  );
 
   const registry = new Registry();
   for (const replica of replicas) {
