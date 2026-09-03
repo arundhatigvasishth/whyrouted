@@ -4,7 +4,7 @@ An inference-aware load balancer for LLM serving fleets.
 
 **M1 scope:** a simulated fleet of replicas, a health scheduler that watches
 them, an in-memory registry that tracks fleet state, and a `GET /status`
-endpoint that exposes it. No routing yet — that's M2.
+endpoint that exposes it. No routing yet. That's M2.
 
 ---
 
@@ -28,7 +28,7 @@ This boots the whole M1 system in one process:
 
 1. Reads config from environment variables (defaults work out of the box).
 2. Spawns a fleet of 4 simulated replica servers, each its own process, on
-   ports `8001`–`8004`.
+   ports `8001` to `8004`.
 3. Waits for all of them to come up.
 4. Registers them in the in-memory registry.
 5. Starts the health scheduler, which polls every replica every second.
@@ -40,8 +40,8 @@ Once it's running:
 curl http://127.0.0.1:8080/status
 ```
 
-returns the live state of the fleet — every replica's health, in-flight
-count, and last-probe latency, e.g.:
+returns the live state of the fleet: every replica's health, in-flight
+count, and last-probe latency. For example:
 
 ```json
 {
@@ -63,7 +63,7 @@ count, and last-probe latency, e.g.:
 }
 ```
 
-Stop everything with `Ctrl+C` — it shuts the scheduler, status server, and
+Stop everything with `Ctrl+C`. It shuts the scheduler, status server, and
 all replica processes down cleanly.
 
 ## Config
@@ -89,7 +89,7 @@ fail, so you can watch the health scheduler and `/status` react in real time.
 With `npm run dev` running in one terminal:
 
 ```
-# kill replica-1 — it starts failing every request with 503
+# kill replica-1: it starts failing every request with 503
 curl -X POST http://127.0.0.1:8001/admin/kill
 
 # watch it flip to unhealthy after WR_UNHEALTHY_THRESHOLD (default 3)
@@ -104,7 +104,7 @@ curl -X POST http://127.0.0.1:8001/admin/revive
 curl http://127.0.0.1:8080/status
 ```
 
-The other replicas are unaffected — only the one you kill changes state.
+The other replicas are unaffected. Only the one you kill changes state.
 Recovery isn't instant on either side; it takes the configured number of
 consecutive probes in a row (that's the hysteresis that stops one flaky
 check from flapping a replica in and out of rotation).
@@ -128,7 +128,7 @@ Runs unit tests for every module plus the M1 integration test
 (`test/integration/m1.test.ts`), which boots the real system as a child
 process and drives the same kill/revive arc as the manual demo above,
 asserting the fleet reaches `healthy`, a kill shows up as `unhealthy` in
-`/status`, and a revive recovers it — end to end, no mocks.
+`/status`, and a revive recovers it, end to end, no mocks.
 
 ## Project structure
 
