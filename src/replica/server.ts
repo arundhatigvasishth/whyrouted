@@ -1,0 +1,117 @@
+/**
+ * Simulated replica server (A1).
+ *
+ * A real, standalone HTTP server that stands in for one model replica. Phase 2
+ * swaps these for real Ollama / vLLM servers behind the same HTTP surface, so
+ * nothing above the adapter boundary changes — that swap is the project's core
+ * architectural bet (PRD §6).
+ *
+ * HTTP surface (docs/m1/m1-shared-contract.md, "Simulated replica HTTP surface"):
+ *   GET  /health  -> 200 { inFlight }        — liveness + self-reported load
+ *   POST /infer   -> 200 { response, latencyMs } — synthetic inference call
+ *
+ * Not here yet:
+ *   - POST /admin/kill, POST /admin/revive   — A3 (kill / revive switch)
+ *   - fluctuating synthetic load/latency     — A2 (currently a fixed jitter)
+ *   - spawning a fleet of these              — A4 (src/replica/launch.ts)
+ */
+
+import express, { type Express } from "express";
+import type { Server } from "node:http";
+import { pathToFileURL } from "node:url";
+
+export interface ReplicaOptions {
+  /** Stable id, e.g. "replica-1". Echoed back in /infer responses and logs. */
+  id: string;
+  /** Port to bind. */
+  port: number;
+  /** Host to bind. Defaults to 127.0.0.1. */
+  host?: string;
+}
+
+export interface RunningReplica {
+  readonly id: string;
+  readonly url: string;
+  /** Stop the server and resolve once the port is released. */
+  close(): Promise<void>;
+}
+
+/**
+ * Placeholder synthetic latency: a flat 5–25 ms. A2 replaces this with a
+ * per-replica fluctuating load/latency generator (`src/replica/synthetic.ts`).
+ */
+function syntheticLatencyMs(): number {
+  return 5 + Math.random() * 20;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Build the Express app for one replica. Exposed separately from
+ * {@link startReplica} so tests can drive it without binding a port.
+ */
+export function createReplicaApp(id: string): Express {
+  const app = express();
+  app.use(express.json());
+
+  /** Concurrent /infer calls in progress right now. */
+  let inFlight = 0;
+
+  app.get("/health", (_req, res) => {
+    res.json({ inFlight });
+  });
+
+  app.post("/infer", async (_req, res) => {
+    inFlight += 1;
+    const startedAt = performance.now();
+    try {
+      await sleep(syntheticLatencyMs());
+      res.json({
+        response: { replicaId: id, servedAt: new Date().toISOString() },
+        latencyMs: Math.round(performance.now() - startedAt),
+      });
+    } finally {
+      inFlight -= 1;
+    }
+  });
+
+  return app;
+}
+
+/** Start a replica server and wait until it is accepting connections. */
+export async function startReplica(opts: ReplicaOptions): Promise<RunningReplica> {
+  const host = opts.host ?? "127.0.0.1";
+  const app = createReplicaApp(opts.id);
+
+  const server = await new Promise<Server>((resolve, reject) => {
+    const s = app.listen(opts.port, host, () => resolve(s));
+    s.once("error", reject);
+  });
+
+  const addr = server.address();
+  const port = typeof addr === "object" && addr !== null ? addr.port : opts.port;
+  const url = `http://${host}:${port}`;
+
+  return {
+    id: opts.id,
+    url,
+    close: () =>
+      new Promise<void>((resolve, reject) => {
+        server.close((err) => (err ? reject(err) : resolve()));
+      }),
+  };
+}
+
+/** `tsx src/replica/server.ts` — run one replica from WR_REPLICA_* env vars. */
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const id = process.env.WR_REPLICA_ID ?? "replica";
+  const port = Number(process.env.WR_REPLICA_PORT ?? 8001);
+  startReplica({ id, port })
+    .then((replica) => console.log(`${replica.id} listening on ${replica.url}`))
+    .catch((err: unknown) => {
+      console.error(`failed to start replica: ${String(err)}`);
+      process.exitCode = 1;
+    });
+}
