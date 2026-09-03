@@ -145,5 +145,11 @@ src/
 test/
   integration/  end-to-end system test
   *.test.ts     unit tests, one per module
-docs/m1/      design docs: task split, shared contract
+docs/
+  prd.md            product spec
+  architecture/     design record, one review per milestone
+  decisions.md      load-bearing technical decisions + rationale
+  milestones/       per-milestone planning (task splits, idea docs)
 ```
+
+See [`docs/README.md`](docs/README.md) for what's what.

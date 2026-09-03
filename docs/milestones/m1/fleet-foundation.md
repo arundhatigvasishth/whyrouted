@@ -45,4 +45,4 @@ This shape is deliberately conservative on two axes (single process, simple on/o
 ---
 
 *Feeds into: `/spec-driven-development` for M1 implementation spec.*
-*Upstream: PRD v3 (`PRDv3.md`), confirmed intent from `/interview-me` session (2026-08-31/09-01).*
+*Upstream: [PRD v3](../../prd.md), confirmed intent from `/interview-me` session (2026-08-31/09-01).*
