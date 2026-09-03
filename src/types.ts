@@ -3,7 +3,7 @@
  *
  * The common vocabulary both tracks build against: what a replica is, what its
  * health and live stats look like, and the exact shape `GET /status` returns.
- * Signed off jointly in docs/m1/m1-shared-contract.md before either track
+ * Signed off jointly in docs/milestones/m1/shared-contract.md before either track
  * started. No behaviour here — types plus one factory for the initial runtime.
  */
 

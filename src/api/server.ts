@@ -2,7 +2,7 @@
  * `GET /status` server (B4).
  *
  * The fleet's one read endpoint for M1: it answers a single route by handing
- * back a `RegistrySnapshot` verbatim (docs/m1/m1-shared-contract.md, "GET
+ * back a `RegistrySnapshot` verbatim (docs/milestones/m1/shared-contract.md, "GET
  * /status response"). No auth, no query params, no other routes — M2's router
  * adds the request-serving surface.
  *

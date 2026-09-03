@@ -14,7 +14,7 @@
  * can be lifted into its own service later (final architecture, PRD §6) without
  * a rewrite.
  *
- * The `HealthResult` → runtime mapping is fixed by docs/m1/m1-shared-contract.md:
+ * The `HealthResult` → runtime mapping is fixed by docs/milestones/m1/shared-contract.md:
  * a failed probe writes `latencyMs: null` and `inFlight: 0`.
  */
 
