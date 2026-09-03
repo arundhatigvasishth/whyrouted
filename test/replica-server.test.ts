@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { startReplica, type RunningReplica } from "../src/replica/server.js";
+import type { SyntheticProfile } from "../src/replica/synthetic.js";
 
 let running: RunningReplica | undefined;
 
@@ -8,9 +9,17 @@ afterEach(async () => {
   running = undefined;
 });
 
-async function start(): Promise<RunningReplica> {
+/** No synthetic baseline load and fixed latency, so tests see only real state. */
+const QUIET: SyntheticProfile = {
+  baseLatencyMs: 5,
+  latencyJitterMs: 0,
+  loadAmplitude: 0,
+  periodMs: 20_000,
+};
+
+async function start(profile: SyntheticProfile = QUIET): Promise<RunningReplica> {
   // port 0 => OS picks a free port, so tests never collide
-  running = await startReplica({ id: "replica-test", port: 0 });
+  running = await startReplica({ id: "replica-test", port: 0, profile });
   return running;
 }
 
@@ -35,11 +44,10 @@ describe("simulated replica server", () => {
   });
 
   it("reports in-flight > 0 while an /infer call is running", async () => {
-    const replica = await start();
+    const replica = await start({ ...QUIET, baseLatencyMs: 40 });
 
     const inflight = fetch(`${replica.url}/infer`, { method: "POST" });
-    // give the request a moment to land and bump the counter
-    await new Promise((r) => setTimeout(r, 2));
+    await new Promise((r) => setTimeout(r, 5));
 
     const health = (await (await fetch(`${replica.url}/health`)).json()) as { inFlight: number };
     expect(health.inFlight).toBeGreaterThanOrEqual(1);
@@ -47,6 +55,20 @@ describe("simulated replica server", () => {
     await inflight;
     const after = (await (await fetch(`${replica.url}/health`)).json()) as { inFlight: number };
     expect(after.inFlight).toBe(0);
+  });
+
+  it("adds a synthetic baseline to the reported in-flight count", async () => {
+    const replica = await start({
+      baseLatencyMs: 5,
+      latencyJitterMs: 0,
+      loadAmplitude: 4,
+      periodMs: 20_000,
+    });
+
+    const health = (await (await fetch(`${replica.url}/health`)).json()) as { inFlight: number };
+    // no real requests in flight, so anything above 0 is the synthetic baseline
+    expect(health.inFlight).toBeGreaterThanOrEqual(0);
+    expect(health.inFlight).toBeLessThanOrEqual(4);
   });
 
   it("releases the port on close", async () => {

@@ -11,14 +11,14 @@
  *   POST /infer   -> 200 { response, latencyMs } — synthetic inference call
  *
  * Not here yet:
- *   - POST /admin/kill, POST /admin/revive   — A3 (kill / revive switch)
- *   - fluctuating synthetic load/latency     — A2 (currently a fixed jitter)
- *   - spawning a fleet of these              — A4 (src/replica/launch.ts)
+ *   - POST /admin/kill, POST /admin/revive   — kill / revive switch
+ *   - spawning a fleet of these              — src/replica/launch.ts
  */
 
 import express, { type Express } from "express";
 import type { Server } from "node:http";
 import { pathToFileURL } from "node:url";
+import { createSynthetic, type SyntheticProfile } from "./synthetic.js";
 
 export interface ReplicaOptions {
   /** Stable id, e.g. "replica-1". Echoed back in /infer responses and logs. */
@@ -27,6 +27,8 @@ export interface ReplicaOptions {
   port: number;
   /** Host to bind. Defaults to 127.0.0.1. */
   host?: string;
+  /** Synthetic load/latency profile. Defaults to `DEFAULT_PROFILE`. */
+  profile?: SyntheticProfile;
 }
 
 export interface RunningReplica {
@@ -34,14 +36,6 @@ export interface RunningReplica {
   readonly url: string;
   /** Stop the server and resolve once the port is released. */
   close(): Promise<void>;
-}
-
-/**
- * Placeholder synthetic latency: a flat 5–25 ms. A2 replaces this with a
- * per-replica fluctuating load/latency generator (`src/replica/synthetic.ts`).
- */
-function syntheticLatencyMs(): number {
-  return 5 + Math.random() * 20;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -52,22 +46,25 @@ function sleep(ms: number): Promise<void> {
  * Build the Express app for one replica. Exposed separately from
  * {@link startReplica} so tests can drive it without binding a port.
  */
-export function createReplicaApp(id: string): Express {
+export function createReplicaApp(id: string, profile?: SyntheticProfile): Express {
   const app = express();
   app.use(express.json());
+
+  const synthetic = createSynthetic(profile);
 
   /** Concurrent /infer calls in progress right now. */
   let inFlight = 0;
 
   app.get("/health", (_req, res) => {
-    res.json({ inFlight });
+    // real concurrent load plus the replica's slow synthetic baseline
+    res.json({ inFlight: inFlight + synthetic.baselineLoad() });
   });
 
   app.post("/infer", async (_req, res) => {
     inFlight += 1;
     const startedAt = performance.now();
     try {
-      await sleep(syntheticLatencyMs());
+      await sleep(synthetic.latencyMs());
       res.json({
         response: { replicaId: id, servedAt: new Date().toISOString() },
         latencyMs: Math.round(performance.now() - startedAt),
@@ -83,7 +80,7 @@ export function createReplicaApp(id: string): Express {
 /** Start a replica server and wait until it is accepting connections. */
 export async function startReplica(opts: ReplicaOptions): Promise<RunningReplica> {
   const host = opts.host ?? "127.0.0.1";
-  const app = createReplicaApp(opts.id);
+  const app = createReplicaApp(opts.id, opts.profile);
 
   const server = await new Promise<Server>((resolve, reject) => {
     const s = app.listen(opts.port, host, () => resolve(s));
