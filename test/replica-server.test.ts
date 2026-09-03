@@ -79,3 +79,42 @@ describe("simulated replica server", () => {
     await expect(fetch(`${replica.url}/health`)).rejects.toThrow();
   });
 });
+
+describe("kill / revive switch", () => {
+  const post = (url: string) => fetch(url, { method: "POST" });
+
+  it("fails /health and /infer with 503 after /admin/kill", async () => {
+    const replica = await start();
+
+    const killed = await post(`${replica.url}/admin/kill`);
+    expect(killed.status).toBe(200);
+    expect(await killed.json()).toEqual({ killed: true });
+
+    expect((await fetch(`${replica.url}/health`)).status).toBe(503);
+    expect((await post(`${replica.url}/infer`)).status).toBe(503);
+  });
+
+  it("recovers after /admin/revive", async () => {
+    const replica = await start();
+
+    await post(`${replica.url}/admin/kill`);
+    const revived = await post(`${replica.url}/admin/revive`);
+    expect(revived.status).toBe(200);
+    expect(await revived.json()).toEqual({ killed: false });
+
+    expect((await fetch(`${replica.url}/health`)).status).toBe(200);
+    expect((await post(`${replica.url}/infer`)).status).toBe(200);
+  });
+
+  it("is idempotent — kill twice, revive twice", async () => {
+    const replica = await start();
+
+    await post(`${replica.url}/admin/kill`);
+    await post(`${replica.url}/admin/kill`);
+    expect((await fetch(`${replica.url}/health`)).status).toBe(503);
+
+    await post(`${replica.url}/admin/revive`);
+    await post(`${replica.url}/admin/revive`);
+    expect((await fetch(`${replica.url}/health`)).status).toBe(200);
+  });
+});
