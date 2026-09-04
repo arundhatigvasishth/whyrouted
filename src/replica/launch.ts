@@ -15,6 +15,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { loadConfig, fleetReplicas, type Config } from "../config.js";
+import { profileForIndex, type SyntheticProfile } from "./synthetic.js";
 
 const serverScript = join(dirname(fileURLToPath(import.meta.url)), "server.ts");
 
@@ -31,15 +32,21 @@ export interface RunningFleet {
 }
 
 /** How a single replica process is started. Swapped for a fake in tests. */
-export type Spawner = (id: string, port: number, host: string) => ChildProcess;
+export type Spawner = (
+  id: string,
+  port: number,
+  host: string,
+  profile: SyntheticProfile,
+) => ChildProcess;
 
-const defaultSpawner: Spawner = (id, port, host) =>
+const defaultSpawner: Spawner = (id, port, host, profile) =>
   spawn(process.execPath, ["--import", "tsx", serverScript], {
     env: {
       ...process.env,
       WR_REPLICA_ID: id,
       WR_REPLICA_PORT: String(port),
       WR_HOST: host,
+      WR_REPLICA_PROFILE: JSON.stringify(profile),
     },
     stdio: "inherit",
   });
@@ -53,7 +60,7 @@ export function launchFleet(config: Config, spawner: Spawner = defaultSpawner): 
   const children: ChildProcess[] = [];
 
   const members = fleetReplicas(config).map((replica, i) => {
-    const child = spawner(replica.id, config.basePort + i, config.host);
+    const child = spawner(replica.id, config.basePort + i, config.host, profileForIndex(i));
     child.on("exit", (code) => {
       if (code) console.error(`${replica.id} exited with code ${code}`);
     });

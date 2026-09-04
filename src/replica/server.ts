@@ -23,7 +23,7 @@
 import express, { type Express } from "express";
 import type { Server } from "node:http";
 import { pathToFileURL } from "node:url";
-import { createSynthetic, type SyntheticProfile } from "./synthetic.js";
+import { createSynthetic, DEFAULT_PROFILE, type SyntheticProfile } from "./synthetic.js";
 
 export interface ReplicaOptions {
   /** Stable id, e.g. "replica-1". Echoed back in /infer responses and logs. */
@@ -130,7 +130,10 @@ export async function startReplica(opts: ReplicaOptions): Promise<RunningReplica
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const id = process.env.WR_REPLICA_ID ?? "replica";
   const port = Number(process.env.WR_REPLICA_PORT ?? 8001);
-  startReplica({ id, port })
+  const profile: SyntheticProfile = process.env.WR_REPLICA_PROFILE
+    ? (JSON.parse(process.env.WR_REPLICA_PROFILE) as SyntheticProfile)
+    : DEFAULT_PROFILE;
+  startReplica({ id, port, profile })
     .then((replica) => console.log(`${replica.id} listening on ${replica.url}`))
     .catch((err: unknown) => {
       console.error(`failed to start replica: ${String(err)}`);

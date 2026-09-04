@@ -27,6 +27,22 @@ export const DEFAULT_PROFILE: SyntheticProfile = {
   periodMs: 20_000,
 };
 
+/**
+ * Deterministic, distinct profile for the Nth replica (0-based) in a fleet, so
+ * routing strategies have real load/latency spread to distribute across instead
+ * of every replica behaving identically. Latency and amplitude both scale with
+ * index; wraps every 4 replicas so an arbitrarily large fleet still gets a mix.
+ */
+export function profileForIndex(index: number): SyntheticProfile {
+  const band = index % 4;
+  return {
+    baseLatencyMs: DEFAULT_PROFILE.baseLatencyMs + band * 10,
+    latencyJitterMs: DEFAULT_PROFILE.latencyJitterMs,
+    loadAmplitude: DEFAULT_PROFILE.loadAmplitude + band * 2,
+    periodMs: DEFAULT_PROFILE.periodMs,
+  };
+}
+
 export interface Synthetic {
   /** A latency sample for one `/infer` call, in ms (always >= 1). */
   latencyMs(): number;

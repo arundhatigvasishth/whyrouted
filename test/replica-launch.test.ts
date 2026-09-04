@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
 import { launchFleet, type Spawner } from "../src/replica/launch.js";
 import { loadConfig } from "../src/config.js";
+import { profileForIndex } from "../src/replica/synthetic.js";
 
 class FakeChild extends EventEmitter {
   pid = Math.floor(Math.random() * 100_000);
@@ -21,19 +22,19 @@ class FakeChild extends EventEmitter {
 describe("launchFleet (fake spawner)", () => {
   const config = loadConfig({ WR_FLEET_SIZE: "3", WR_BASE_PORT: "9000", WR_HOST: "127.0.0.1" });
 
-  it("spawns one process per replica on consecutive ports", () => {
-    const calls: Array<{ id: string; port: number; host: string }> = [];
-    const spawner: Spawner = (id, port, host) => {
-      calls.push({ id, port, host });
+  it("spawns one process per replica on consecutive ports, each with a distinct profile", () => {
+    const calls: Array<{ id: string; port: number; host: string; profile: unknown }> = [];
+    const spawner: Spawner = (id, port, host, profile) => {
+      calls.push({ id, port, host, profile });
       return new FakeChild() as unknown as ChildProcess;
     };
 
     const fleet = launchFleet(config, spawner);
 
     expect(calls).toEqual([
-      { id: "replica-1", port: 9000, host: "127.0.0.1" },
-      { id: "replica-2", port: 9001, host: "127.0.0.1" },
-      { id: "replica-3", port: 9002, host: "127.0.0.1" },
+      { id: "replica-1", port: 9000, host: "127.0.0.1", profile: profileForIndex(0) },
+      { id: "replica-2", port: 9001, host: "127.0.0.1", profile: profileForIndex(1) },
+      { id: "replica-3", port: 9002, host: "127.0.0.1", profile: profileForIndex(2) },
     ]);
     expect(fleet.members.map((m) => m.url)).toEqual([
       "http://127.0.0.1:9000",
