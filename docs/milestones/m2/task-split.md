@@ -121,7 +121,14 @@ for most of the milestone.
 
 ---
 
-## 8. Definition of done (M2)
+## 8. Working agreement
+
+The commit / branch / PR / review rules live in [`CONTRIBUTING.md`](../../../CONTRIBUTING.md)
+at the repo root — they're project-wide, not M2-specific. In force for all of M2.
+
+---
+
+## 9. Definition of done (M2)
 
 - `POST /route` picks a replica under all three strategies (round-robin,
   least-loaded, latency-weighted) and forwards the request via `sendRequest`.
