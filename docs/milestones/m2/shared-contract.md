@@ -118,9 +118,12 @@ callers shouldn't assume it's permanent.
 
 ---
 
-## `POST /route` request/response shape (informs K11)
+## `POST /route` request/response shape
 
-Request body: `{ "payload": <opaque, forwarded to sendRequest as-is> }`.
+Landed as `POST /route` in `src/api/server.ts`.
+
+Request body: `{ "payload": <opaque, forwarded to sendRequest as-is> }`. A missing
+`payload` is allowed and forwards `undefined` (the adapter sends `{}`).
 
 Success, `200`:
 ```json
@@ -138,8 +141,17 @@ or
 ```json
 { "error": "no_routable_replica" }
 ```
-K11 maps `RouteResult`'s two error variants straight through, unchanged — no
-collapsing them into one generic message.
+The engine's two error variants pass straight through, unchanged, so the caller
+can tell "fleet is down" from "nothing routable yet".
+
+The chosen replica's request failed, `502` (the engine picked a healthy replica
+but `sendRequest` rejected: transport error, timeout, or non-2xx). M2 has no
+failover, that is M3, so this is terminal for the request:
+```json
+{ "error": "replica_request_failed", "replicaId": "replica-3", "detail": "..." }
+```
+
+Malformed JSON body, `400`: `{ "error": "invalid_json_body" }`.
 
 ---
 
