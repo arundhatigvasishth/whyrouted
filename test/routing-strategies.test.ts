@@ -22,11 +22,19 @@ function candidate(id: string, inFlight: number, latencyMs: number | null): Repl
 }
 
 describe("round-robin", () => {
-  it("cycles through candidates in id order", () => {
+  it("cycles through candidates in the order given (registration order, per the engine)", () => {
+    const strategy = createRoundRobin();
+    const candidates = [candidate("replica-1", 0, 10), candidate("replica-2", 0, 10)];
+
+    expect(strategy.pick(candidates, DEFAULT_SCORING_WEIGHTS)).toBe("replica-1");
+    expect(strategy.pick(candidates, DEFAULT_SCORING_WEIGHTS)).toBe("replica-2");
+    expect(strategy.pick(candidates, DEFAULT_SCORING_WEIGHTS)).toBe("replica-1");
+  });
+
+  it("does not re-sort candidates itself", () => {
     const strategy = createRoundRobin();
     const candidates = [candidate("replica-2", 0, 10), candidate("replica-1", 0, 10)];
 
-    expect(strategy.pick(candidates, DEFAULT_SCORING_WEIGHTS)).toBe("replica-1");
     expect(strategy.pick(candidates, DEFAULT_SCORING_WEIGHTS)).toBe("replica-2");
     expect(strategy.pick(candidates, DEFAULT_SCORING_WEIGHTS)).toBe("replica-1");
   });
