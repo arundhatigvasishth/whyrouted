@@ -67,9 +67,13 @@ export interface RoutingConfig {
 
 A single mutable in-process object, read by the engine on every `route()` call,
 written by config/MCP action tools (M5b) without a restart. `setWeights` throws
-on a negative, `NaN`, or non-finite weight. `DEFAULT_SCORING_WEIGHTS` lives once
-in `src/routing/types.ts`; `src/config.ts` (K10) imports it rather than
-redeclaring `{ 1, 1 }`.
+on a negative, `NaN`, or non-finite weight, and `setStrategyName` throws on an
+unknown name. `DEFAULT_SCORING_WEIGHTS` lives once in `src/routing/types.ts`;
+`src/config.ts` imports it rather than redeclaring `{ 1, 1 }`.
+
+Landed as `src/routing/config.ts` (`createRoutingConfig`). Startup values come
+from `src/config.ts`: `WR_ROUTING_STRATEGY` (default `least-loaded`, see
+`docs/decisions.md`), `WR_LOAD_WEIGHT` and `WR_LATENCY_WEIGHT` (default `1`).
 
 ---
 

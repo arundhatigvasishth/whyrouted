@@ -5,6 +5,21 @@ when a choice would be expensive to reverse or isn't obvious from the code.
 
 ---
 
+## 2026-09-06: default routing strategy is least-loaded
+
+The engine starts on `least-loaded` unless `WR_ROUTING_STRATEGY` says otherwise.
+Default scoring weights are 1/1 (load and latency counted equally), tunable via
+`WR_LOAD_WEIGHT` / `WR_LATENCY_WEIGHT` and live via the M5b MCP tools.
+
+**Why:** it is load-aware, which is the project's whole thesis (round-robin is
+the "naive" baseline the PRD calls out), and unlike latency-weighted it always
+returns a pick even at cold start, before any health probe has recorded a
+latency. The PRD success metric for load distribution is also stated in terms
+of least-loaded.
+
+**Revisit when:** M2 load testing (K14) shows latency-weighted distributes
+better under bursty load, or the demo wants a different default.
+
 ## 2026-09-03: `RegistryStore` interface is synchronous
 
 The registry interface methods return values directly, not Promises, matching the
