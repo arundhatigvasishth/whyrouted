@@ -88,6 +88,42 @@ export class HealthScheduler {
   }
 
   /**
+   * Take a replica out of rotation immediately, driven by a live request
+   * failure rather than the poll loop (L2, M3). Marks it `unhealthy` right
+   * now instead of waiting for `unhealthyThreshold` failed probes — the
+   * whole point of request-driven ejection (see docs/milestones/m3/task-split.md
+   * §1). Recovery is untouched: it still needs `healthyThreshold` consecutive
+   * clean probes, same as a health-check-driven `unhealthy`, so an ejected
+   * replica cannot rejoin on one lucky probe.
+   *
+   * `reason` is for logs/observability only. Recording a queryable
+   * `FailoverEvent` for this ejection is the caller's job (M3's retry loop,
+   * L11 + L12) — this method only drives the hysteresis state machine and
+   * `onTransition`, same as a poll-driven transition would.
+   *
+   * No-ops (still calls `sink.setHealth` idempotently) if the replica is
+   * already `unhealthy`. Throws on an unregistered replica id.
+   */
+  eject(replicaId: string, reason: string): void {
+    const state = this.hysteresis.get(replicaId);
+    if (state === undefined) {
+      throw new Error(`cannot eject unknown replica "${replicaId}"`);
+    }
+    const at = this.now().toISOString();
+    const from = state.health;
+
+    state.consecSuccesses = 0;
+    state.consecFailures = this.opts.unhealthyThreshold;
+    state.health = "unhealthy";
+    this.opts.sink.setHealth(replicaId, "unhealthy");
+
+    console.log(`${replicaId}: ejected (${reason})`);
+    if (from !== "unhealthy") {
+      this.opts.onTransition?.({ replicaId, from, to: "unhealthy", at });
+    }
+  }
+
+  /**
    * Probe every replica once. Overlapping sweeps are skipped — if a sweep is
    * still running when the interval fires, that tick is dropped rather than
    * stacking probes on a struggling fleet.

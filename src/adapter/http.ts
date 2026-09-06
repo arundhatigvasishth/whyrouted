@@ -12,7 +12,12 @@
  */
 
 import type { Replica } from "../types.js";
-import type { HealthResult, ReplicaAdapter, SendResult } from "./types.js";
+import {
+  ReplicaRequestError,
+  type HealthResult,
+  type ReplicaAdapter,
+  type SendResult,
+} from "./types.js";
 
 export interface HttpAdapterOptions {
   /** The fleet. Used to resolve a replica id to its base URL. */
@@ -61,19 +66,37 @@ export class HttpReplicaAdapter implements ReplicaAdapter {
     const base = this.resolve(replicaId);
     const startedAt = performance.now();
 
-    const res = await fetchWithTimeout(
-      `${base}/infer`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload ?? {}),
-      },
-      this.requestTimeoutMs,
-    );
+    let res: Response;
+    try {
+      res = await fetchWithTimeout(
+        `${base}/infer`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload ?? {}),
+        },
+        this.requestTimeoutMs,
+      );
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        throw new ReplicaRequestError(
+          "timeout",
+          `replica "${replicaId}" did not respond to /infer within ${this.requestTimeoutMs}ms`,
+        );
+      }
+      throw new ReplicaRequestError(
+        "connection",
+        `could not reach replica "${replicaId}" for /infer: ${String(err)}`,
+      );
+    }
     const latencyMs = Math.round(performance.now() - startedAt);
 
     if (!res.ok) {
-      throw new Error(`replica "${replicaId}" returned ${res.status} for /infer`);
+      throw new ReplicaRequestError(
+        "http_status",
+        `replica "${replicaId}" returned ${res.status} for /infer`,
+        res.status,
+      );
     }
 
     return { response: await res.json(), latencyMs };
