@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { startReplica, type RunningReplica } from "../src/replica/server.js";
 import { HttpReplicaAdapter } from "../src/adapter/http.js";
+import { ReplicaRequestError } from "../src/adapter/types.js";
 import type { Replica } from "../src/types.js";
 
 const replicas: RunningReplica[] = [];
@@ -78,19 +79,44 @@ describe("HttpReplicaAdapter.sendRequest", () => {
     expect(result.latencyMs).toBeGreaterThanOrEqual(0);
   });
 
-  it("rejects when the replica is killed", async () => {
+  it("rejects with a retryable http_status error when the replica is killed", async () => {
     const replica = await spawnReplica("replica-1");
     await fetch(`${replica.url}/admin/kill`, { method: "POST" });
     const adapter = new HttpReplicaAdapter({ replicas: [replica], healthTimeoutMs: 500 });
 
-    await expect(adapter.sendRequest("replica-1", {})).rejects.toThrow(/503/);
+    const err = await adapter.sendRequest("replica-1", {}).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ReplicaRequestError);
+    const rerr = err as ReplicaRequestError;
+    expect(rerr.kind).toBe("http_status");
+    expect(rerr.status).toBe(503);
+    expect(rerr.retryable).toBe(true);
   });
 
-  it("rejects when the replica is unreachable", async () => {
+  it("rejects with a retryable connection error when the replica is unreachable", async () => {
     const adapter = new HttpReplicaAdapter({
       replicas: [{ id: "dead", url: "http://127.0.0.1:1" }],
       healthTimeoutMs: 200,
     });
-    await expect(adapter.sendRequest("dead", {})).rejects.toThrow();
+
+    const err = await adapter.sendRequest("dead", {}).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ReplicaRequestError);
+    expect((err as ReplicaRequestError).kind).toBe("connection");
+    expect((err as ReplicaRequestError).retryable).toBe(true);
+  });
+
+  it("rejects with a retryable timeout error when the replica is too slow", async () => {
+    const slow = { baseLatencyMs: 500, latencyJitterMs: 0, loadAmplitude: 0, periodMs: 20_000 };
+    const running = await startReplica({ id: "replica-1", port: 0, profile: slow });
+    replicas.push(running);
+    const adapter = new HttpReplicaAdapter({
+      replicas: [{ id: "replica-1", url: running.url }],
+      healthTimeoutMs: 500,
+      requestTimeoutMs: 50,
+    });
+
+    const err = await adapter.sendRequest("replica-1", {}).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ReplicaRequestError);
+    expect((err as ReplicaRequestError).kind).toBe("timeout");
+    expect((err as ReplicaRequestError).retryable).toBe(true);
   });
 });
