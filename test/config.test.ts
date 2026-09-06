@@ -16,6 +16,9 @@ describe("loadConfig", () => {
       WR_HEALTH_TIMEOUT_MS: "750",
       WR_UNHEALTHY_THRESHOLD: "5",
       WR_HEALTHY_THRESHOLD: "1",
+      WR_ROUTING_STRATEGY: "latency-weighted",
+      WR_LOAD_WEIGHT: "0.7",
+      WR_LATENCY_WEIGHT: "0.3",
     });
     expect(config).toEqual({
       host: "0.0.0.0",
@@ -26,7 +29,31 @@ describe("loadConfig", () => {
       healthTimeoutMs: 750,
       unhealthyThreshold: 5,
       healthyThreshold: 1,
+      routingStrategy: "latency-weighted",
+      scoringWeights: { loadWeight: 0.7, latencyWeight: 0.3 },
     });
+  });
+
+  it("defaults the routing strategy to least-loaded and the weights to 1/1", () => {
+    const config = loadConfig({});
+    expect(config.routingStrategy).toBe("least-loaded");
+    expect(config.scoringWeights).toEqual({ loadWeight: 1, latencyWeight: 1 });
+  });
+
+  it("rejects an unknown routing strategy", () => {
+    expect(() => loadConfig({ WR_ROUTING_STRATEGY: "fastest" })).toThrow(
+      /WR_ROUTING_STRATEGY must be one of/,
+    );
+  });
+
+  it("rejects a non-finite scoring weight", () => {
+    expect(() => loadConfig({ WR_LOAD_WEIGHT: "abc" })).toThrow(
+      /WR_LOAD_WEIGHT must be a finite number/,
+    );
+  });
+
+  it("rejects a negative scoring weight", () => {
+    expect(() => loadConfig({ WR_LATENCY_WEIGHT: "-1" })).toThrow(/WR_LATENCY_WEIGHT must be >= 0/);
   });
 
   it("treats an empty-string env var as unset", () => {

@@ -2,13 +2,18 @@
  * Config loader (B5).
  *
  * Reads the whole `Config` from environment variables (all prefixed `WR_`),
- * fills in defaults, and validates. `main.ts` (J3) calls `loadConfig()` once at
- * startup and passes narrow slices down — no other module imports `Config`.
+ * fills in defaults, and validates. `main.ts` calls `loadConfig()` once at
+ * startup and passes narrow slices down, no other module imports `Config`.
  *
- * Shape and defaults are fixed by docs/milestones/m1/shared-contract.md.
+ * The M1 shape and defaults are fixed by docs/milestones/m1/shared-contract.md.
+ * The routing fields (strategy, scoring weights) were added for M2, see
+ * docs/milestones/m2/shared-contract.md.
  */
 
 import type { Replica } from "./types.js";
+import type { StrategyName, ScoringWeights } from "./routing/types.js";
+import { DEFAULT_SCORING_WEIGHTS } from "./routing/types.js";
+import { STRATEGY_NAMES } from "./routing/strategies/index.js";
 
 export interface Config {
   /** Host the replicas and the status server bind to. */
@@ -27,6 +32,10 @@ export interface Config {
   unhealthyThreshold: number;
   /** M — consecutive successful probes before a replica recovers to `healthy`. */
   healthyThreshold: number;
+  /** Routing strategy the engine starts with. Live-swappable at runtime (M5b). */
+  routingStrategy: StrategyName;
+  /** Scoring weights the engine starts with. Live-tunable at runtime (M5b). */
+  scoringWeights: ScoringWeights;
 }
 
 export const DEFAULT_CONFIG: Config = {
@@ -38,6 +47,8 @@ export const DEFAULT_CONFIG: Config = {
   healthTimeoutMs: 500,
   unhealthyThreshold: 3,
   healthyThreshold: 2,
+  routingStrategy: "least-loaded",
+  scoringWeights: { ...DEFAULT_SCORING_WEIGHTS },
 };
 
 type Env = Record<string, string | undefined>;
@@ -50,6 +61,27 @@ function readInt(env: Env, name: string, fallback: number): number {
     throw new Error(`${name} must be an integer, got ${JSON.stringify(raw)}`);
   }
   return n;
+}
+
+function readNumber(env: Env, name: string, fallback: number): number {
+  const raw = env[name];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) {
+    throw new Error(`${name} must be a finite number, got ${JSON.stringify(raw)}`);
+  }
+  return n;
+}
+
+function readStrategy(env: Env, name: string, fallback: StrategyName): StrategyName {
+  const raw = env[name]?.trim();
+  if (raw === undefined || raw === "") return fallback;
+  if (!(STRATEGY_NAMES as string[]).includes(raw)) {
+    throw new Error(
+      `${name} must be one of ${STRATEGY_NAMES.join(", ")}, got ${JSON.stringify(raw)}`,
+    );
+  }
+  return raw as StrategyName;
 }
 
 /**
@@ -67,6 +99,15 @@ export function loadConfig(env: Env = process.env): Config {
     healthTimeoutMs: readInt(env, "WR_HEALTH_TIMEOUT_MS", DEFAULT_CONFIG.healthTimeoutMs),
     unhealthyThreshold: readInt(env, "WR_UNHEALTHY_THRESHOLD", DEFAULT_CONFIG.unhealthyThreshold),
     healthyThreshold: readInt(env, "WR_HEALTHY_THRESHOLD", DEFAULT_CONFIG.healthyThreshold),
+    routingStrategy: readStrategy(env, "WR_ROUTING_STRATEGY", DEFAULT_CONFIG.routingStrategy),
+    scoringWeights: {
+      loadWeight: readNumber(env, "WR_LOAD_WEIGHT", DEFAULT_CONFIG.scoringWeights.loadWeight),
+      latencyWeight: readNumber(
+        env,
+        "WR_LATENCY_WEIGHT",
+        DEFAULT_CONFIG.scoringWeights.latencyWeight,
+      ),
+    },
   };
   validate(config);
   return config;
@@ -104,6 +145,9 @@ function validate(c: Config): void {
 
   if (c.unhealthyThreshold < 1) errors.push("WR_UNHEALTHY_THRESHOLD must be >= 1");
   if (c.healthyThreshold < 1) errors.push("WR_HEALTHY_THRESHOLD must be >= 1");
+
+  if (c.scoringWeights.loadWeight < 0) errors.push("WR_LOAD_WEIGHT must be >= 0");
+  if (c.scoringWeights.latencyWeight < 0) errors.push("WR_LATENCY_WEIGHT must be >= 0");
 
   if (errors.length > 0) {
     throw new Error(`invalid configuration:\n  - ${errors.join("\n  - ")}`);
