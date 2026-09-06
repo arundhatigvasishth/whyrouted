@@ -26,7 +26,8 @@ export function createLatencyWeighted(): RoutingStrategy {
       let bestScore = score(best);
       for (const candidate of scoreable.slice(1)) {
         const candidateScore = score(candidate);
-        const better = candidateScore < bestScore || (candidateScore === bestScore && candidate.id < best.id);
+        const better =
+          candidateScore < bestScore || (candidateScore === bestScore && candidate.id < best.id);
         if (better) {
           best = candidate;
           bestScore = candidateScore;
