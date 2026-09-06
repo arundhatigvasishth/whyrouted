@@ -7,13 +7,13 @@
  * The baseline strategy: useful as a control to compare the load-aware
  * strategies against.
  *
- * Trusts the given order rather than re-deriving one — the contract already
+ * Trusts the given order rather than re-deriving one: the contract already
  * guarantees it, and re-sorting here would be a second, redundant source of
  * truth for something that's the engine's job.
  *
  * Keeps a cursor across calls, so the engine must reuse this same instance
  * for the lifetime of "round-robin" being the active strategy (see the
- * lifecycle rule in the contract) — rebuilding it every call would reset the
+ * lifecycle rule in the contract). Rebuilding it every call would reset the
  * cursor and break the cycling.
  */
 
