@@ -145,6 +145,61 @@ describe("HealthScheduler hysteresis", () => {
   });
 });
 
+describe("HealthScheduler.eject", () => {
+  it("marks the replica unhealthy immediately and emits a transition", () => {
+    const { registry, scheduler, transitions } = setup({ "replica-1": [OK] });
+
+    scheduler.eject("replica-1", "request failure");
+    expect(healthOf(registry, "replica-1")).toBe("unhealthy");
+    expect(transitions).toEqual([
+      {
+        replicaId: "replica-1",
+        from: "unknown",
+        to: "unhealthy",
+        at: "2026-09-01T12:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("does not recover before M consecutive clean probes after an eject", async () => {
+    const { registry, scheduler } = setup({ "replica-1": [OK, OK] }, { m: 2 });
+
+    scheduler.eject("replica-1", "request failure");
+    await scheduler.pollAll(); // 1 clean probe
+    expect(healthOf(registry, "replica-1")).toBe("unhealthy");
+
+    await scheduler.pollAll(); // 2nd clean probe — recovers
+    expect(healthOf(registry, "replica-1")).toBe("healthy");
+  });
+
+  it("a real recovery after eject still emits unhealthy -> healthy", async () => {
+    const { scheduler, transitions } = setup({ "replica-1": [OK, OK] }, { m: 2 });
+
+    scheduler.eject("replica-1", "request failure");
+    await runPolls(scheduler, 2);
+
+    expect(transitions.map((t) => `${t.from}->${t.to}`)).toEqual([
+      "unknown->unhealthy",
+      "unhealthy->healthy",
+    ]);
+  });
+
+  it("is a no-op transition (but still safe) when already unhealthy", () => {
+    const { registry, scheduler, transitions } = setup({ "replica-1": [DOWN] }, { n: 3 });
+
+    scheduler.eject("replica-1", "first eject");
+    scheduler.eject("replica-1", "second eject");
+
+    expect(healthOf(registry, "replica-1")).toBe("unhealthy");
+    expect(transitions).toHaveLength(1);
+  });
+
+  it("throws on an unregistered replica id", () => {
+    const { scheduler } = setup({ "replica-1": [OK] });
+    expect(() => scheduler.eject("replica-9", "request failure")).toThrow(/unknown replica/);
+  });
+});
+
 describe("HealthScheduler start/stop", () => {
   it("polls immediately on start and then on the interval", async () => {
     vi.useFakeTimers();
