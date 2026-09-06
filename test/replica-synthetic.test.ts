@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   createSynthetic,
   DEFAULT_PROFILE,
+  profileForIndex,
   type SyntheticProfile,
 } from "../src/replica/synthetic.js";
 
@@ -82,5 +83,28 @@ describe("DEFAULT_PROFILE", () => {
     const synthetic = createSynthetic(DEFAULT_PROFILE);
     expect(synthetic.latencyMs()).toBeGreaterThan(0);
     expect(synthetic.baselineLoad()).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("profileForIndex", () => {
+  it("gives distinct replicas distinct latency and load bands", () => {
+    const profiles = [0, 1, 2, 3].map(profileForIndex);
+    const latencies = new Set(profiles.map((p) => p.baseLatencyMs));
+    const amplitudes = new Set(profiles.map((p) => p.loadAmplitude));
+    expect(latencies.size).toBe(4);
+    expect(amplitudes.size).toBe(4);
+  });
+
+  it("wraps every 4 replicas so a larger fleet still gets a mix", () => {
+    expect(profileForIndex(4)).toEqual(profileForIndex(0));
+    expect(profileForIndex(5)).toEqual(profileForIndex(1));
+  });
+
+  it("every profile is a usable profile", () => {
+    for (const i of [0, 1, 2, 3]) {
+      const synthetic = createSynthetic(profileForIndex(i));
+      expect(synthetic.latencyMs()).toBeGreaterThan(0);
+      expect(synthetic.baselineLoad()).toBeGreaterThanOrEqual(0);
+    }
   });
 });
