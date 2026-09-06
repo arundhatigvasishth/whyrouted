@@ -1,13 +1,15 @@
 /**
- * whyrouted main process (M1, J3).
+ * whyrouted main process.
  *
- * Wires the two tracks together: load config, start the simulated fleet, wait
- * for it to come up, register every replica in the registry, start the health
- * scheduler polling through the HTTP adapter, and expose `GET /status`.
+ * Wires the tracks together: load config, start the simulated fleet, wait for
+ * it to come up, register every replica in the registry, start the health
+ * scheduler polling through the HTTP adapter, build the routing engine over
+ * the registry and the live routing config, and expose `GET /status` and
+ * `POST /route`.
  *
- * Everything below depends on the shared contract (`src/adapter/types.ts`,
- * `src/types.ts`) only — swapping the registry backend or the adapter
- * implementation later does not touch this file's shape.
+ * Everything below depends on the shared contracts (`src/adapter/types.ts`,
+ * `src/types.ts`, `src/routing/*`) only, swapping the registry backend or the
+ * adapter implementation later does not touch this file's shape.
  */
 
 import { loadConfig, fleetReplicas } from "./config.js";
@@ -15,6 +17,8 @@ import { launchFleet, type RunningFleet } from "./replica/launch.js";
 import { Registry } from "./registry/registry.js";
 import { HttpReplicaAdapter } from "./adapter/http.js";
 import { HealthScheduler } from "./health/scheduler.js";
+import { createRoutingConfig } from "./routing/config.js";
+import { createRoutingEngine } from "./routing/engine.js";
 import { startStatusServer, type RunningStatusServer } from "./api/server.js";
 
 function sleep(ms: number): Promise<void> {
@@ -68,12 +72,22 @@ async function main(): Promise<void> {
   });
   scheduler.start();
 
+  const routingConfig = createRoutingConfig({
+    strategy: config.routingStrategy,
+    weights: config.scoringWeights,
+  });
+  const engine = createRoutingEngine({ registry, config: routingConfig });
+
   const status: RunningStatusServer = await startStatusServer({
     store: registry,
+    engine,
+    adapter,
     port: config.statusPort,
     host: config.host,
   });
-  console.log(`status server listening on ${status.url}/status`);
+  console.log(
+    `api server listening on ${status.url} (GET /status, POST /route), routing strategy: ${routingConfig.getStrategyName()}`,
+  );
 
   const shutdown = (): void => {
     console.log("shutting down...");
