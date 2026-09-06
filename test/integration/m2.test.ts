@@ -120,13 +120,18 @@ describe("M2 end to end", () => {
     try {
       await waitForAllHealthy(statusUrl, 3);
 
-      const counts = await routeManyAndCount(statusUrl, 15);
+      // 30 samples, not 15: the registry snapshot only updates every 300ms
+      // (the health-poll interval), so a burst of requests inside one poll
+      // window all see the same inFlight/latencyMs and a single noisy
+      // /health round-trip can flip the score for that whole window. A
+      // bigger sample dilutes one bad window instead of being dominated by it.
+      const counts = await routeManyAndCount(statusUrl, 30);
       // Health-probe latency is near-equal across the fleet (only /infer is
       // slow), so the load term dominates and replica-1 still wins. What this
       // asserts is that latency-weighted runs cleanly against real registry
       // data and picks sensibly, not a latency-specific ordering.
       expect(counts["replica-1"] ?? 0).toBeGreaterThan(counts["replica-3"] ?? 0);
-      expect(counts["replica-1"] ?? 0).toBeGreaterThanOrEqual(8);
+      expect(counts["replica-1"] ?? 0).toBeGreaterThanOrEqual(16);
     } finally {
       await stopTree(proc);
     }
