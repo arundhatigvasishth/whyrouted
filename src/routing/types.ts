@@ -6,7 +6,7 @@
  *
  * A strategy does no I/O and never touches the registry or adapter, and never
  * mutates `candidates` or anything on them. It may keep internal state across
- * calls (round-robin's cursor does) — it is not required to be a pure
+ * calls (round-robin's cursor does): it is not required to be a pure
  * function, just side-effect-free with respect to anything outside itself.
  *
  * Lifecycle rule (binds the engine, K9): the engine holds exactly one
@@ -45,7 +45,7 @@ export interface RoutingStrategy {
   readonly name: StrategyName;
   /**
    * Pick a replica id from `candidates`. Returns `null` when there is nothing
-   * this strategy can pick from — either `candidates` is empty, or (for
+   * this strategy can pick from: either `candidates` is empty, or (for
    * latency-weighted) every candidate lacks a usable measurement. The engine
    * is responsible for telling these two `null` cases apart in `RouteResult`
    * (see engine.ts); a strategy only ever reports "I have nothing," not why.
