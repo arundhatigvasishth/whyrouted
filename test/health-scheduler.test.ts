@@ -146,7 +146,7 @@ describe("HealthScheduler hysteresis", () => {
 });
 
 describe("HealthScheduler.eject", () => {
-  it("marks the replica unhealthy immediately and emits a transition", () => {
+  it("marks the replica unhealthy immediately and emits a transition carrying the reason", () => {
     const { registry, scheduler, transitions } = setup({ "replica-1": [OK] });
 
     scheduler.eject("replica-1", "request failure");
@@ -157,8 +157,21 @@ describe("HealthScheduler.eject", () => {
         from: "unknown",
         to: "unhealthy",
         at: "2026-09-01T12:00:00.000Z",
+        reason: "request failure",
       },
     ]);
+  });
+
+  it("syncs the snapshot's consec counters with the eject, not the last poll", async () => {
+    const { registry, scheduler } = setup({ "replica-1": [OK, OK] }, { n: 3, m: 2 });
+
+    await runPolls(scheduler, 2); // healthy, consecSuccesses now 2
+    scheduler.eject("replica-1", "request failure");
+
+    const runtime = registry.getSnapshot().replicas.find((r) => r.id === "replica-1")!.runtime;
+    expect(runtime.health).toBe("unhealthy");
+    expect(runtime.consecSuccesses).toBe(0);
+    expect(runtime.consecFailures).toBe(3);
   });
 
   it("does not recover before M consecutive clean probes after an eject", async () => {

@@ -31,6 +31,12 @@ export interface HealthTransition {
   to: ReplicaHealth;
   /** ISO 8601 timestamp of the poll that caused the transition. */
   at: string;
+  /**
+   * Why the transition happened, when it wasn't the poll loop. Set by `eject()`
+   * to the caller's reason string; absent for ordinary poll-driven transitions
+   * (those are always "N consecutive failures" or "M consecutive successes").
+   */
+  reason?: string;
 }
 
 export interface SchedulerOptions {
@@ -96,10 +102,10 @@ export class HealthScheduler {
    * clean probes, same as a health-check-driven `unhealthy`, so an ejected
    * replica cannot rejoin on one lucky probe.
    *
-   * `reason` is for logs/observability only. Recording a queryable
-   * `FailoverEvent` for this ejection is the caller's job (M3's retry loop,
-   * L11 + L12) — this method only drives the hysteresis state machine and
-   * `onTransition`, same as a poll-driven transition would.
+   * `reason` is passed straight to `onTransition` so the caller (M3's retry
+   * loop, L11 + L12) can record a queryable `FailoverEvent`. This method only
+   * drives the hysteresis state machine and `onTransition`, same as a
+   * poll-driven transition would; it does no logging of its own.
    *
    * No-ops (still calls `sink.setHealth` idempotently) if the replica is
    * already `unhealthy`. Throws on an unregistered replica id.
@@ -115,11 +121,18 @@ export class HealthScheduler {
     state.consecSuccesses = 0;
     state.consecFailures = this.opts.unhealthyThreshold;
     state.health = "unhealthy";
+    // Keep the snapshot's counters in step with the internal state, so
+    // `/status` doesn't show `unhealthy` next to stale successes from the
+    // last good poll. `inFlight` / `latencyMs` are left alone: an eject is
+    // not a probe and has no fresh measurement to write.
+    this.opts.sink.updateRuntime(replicaId, {
+      consecFailures: this.opts.unhealthyThreshold,
+      consecSuccesses: 0,
+    });
     this.opts.sink.setHealth(replicaId, "unhealthy");
 
-    console.log(`${replicaId}: ejected (${reason})`);
     if (from !== "unhealthy") {
-      this.opts.onTransition?.({ replicaId, from, to: "unhealthy", at });
+      this.opts.onTransition?.({ replicaId, from, to: "unhealthy", at, reason });
     }
   }
 

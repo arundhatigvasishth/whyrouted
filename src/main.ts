@@ -68,7 +68,8 @@ async function main(): Promise<void> {
     intervalMs: config.healthIntervalMs,
     unhealthyThreshold: config.unhealthyThreshold,
     healthyThreshold: config.healthyThreshold,
-    onTransition: (t) => console.log(`${t.replicaId}: ${t.from} -> ${t.to}`),
+    onTransition: (t) =>
+      console.log(`${t.replicaId}: ${t.from} -> ${t.to}${t.reason ? ` (${t.reason})` : ""}`),
   });
   scheduler.start();
 
