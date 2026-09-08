@@ -207,6 +207,29 @@ describe("HealthScheduler.eject", () => {
     expect(transitions).toHaveLength(1);
   });
 
+  it("does not erase in-progress recovery when ejected a second time", async () => {
+    // Regression: a stale/duplicate eject (e.g. a request that failed after
+    // an earlier failure already ejected the same replica) must not reset
+    // consecSuccesses a real health probe already earned toward recovery.
+    const { registry, scheduler, transitions } = setup({ "replica-1": [OK, OK] }, { m: 2 });
+
+    scheduler.eject("replica-1", "first failure");
+    await scheduler.pollAll(); // 1 clean probe: consecSuccesses = 1, still unhealthy
+
+    const midway = registry.getSnapshot().replicas[0]!.runtime;
+    expect(midway.consecSuccesses).toBe(1);
+    expect(midway.health).toBe("unhealthy");
+
+    scheduler.eject("replica-1", "stale request failure"); // should be a true no-op now
+
+    const afterSecondEject = registry.getSnapshot().replicas[0]!.runtime;
+    expect(afterSecondEject.consecSuccesses).toBe(1); // NOT reset to 0
+    expect(transitions).toHaveLength(1); // no second transition emitted
+
+    await scheduler.pollAll(); // the 2nd clean probe should now recover it
+    expect(healthOf(registry, "replica-1")).toBe("healthy");
+  });
+
   it("throws on an unregistered replica id", () => {
     const { scheduler } = setup({ "replica-1": [OK] });
     expect(() => scheduler.eject("replica-9", "request failure")).toThrow(/unknown replica/);
