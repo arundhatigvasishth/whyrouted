@@ -235,8 +235,7 @@ retries over zero-loss-with-no-retry, so this is not solved in M3.
 ## Frozen by this contract
 
 - **`RoutingStrategy` interface.** No `exclude` parameter on `pick`; the engine
-  filters candidates before calling it. A new `docs/decisions.md` entry records
-  this.
+  filters candidates before calling it. Recorded in `docs/decisions.md`.
 - **`checkHealth` never rejects** (M1, 2026-09-01). L1 is `sendRequest` only.
 - **Recovery is always hysteresis-gated** by `healthyThreshold`. Request-driven
   ejection has no fast-recovery counterpart.
@@ -258,12 +257,29 @@ retries over zero-loss-with-no-retry, so this is not solved in M3.
 
 - [x] L1 error taxonomy shape and retryability table (Junaid, built in #30)
 - [x] L2 `eject()` semantics, `HealthTransition.reason` (Junaid, built in #30 / #32)
-- [ ] L1 / L2 reviewed as merged (Arundhati)
-- [ ] L3 `FailoverEvent` shape, the feed rules, the `reason`-means-skip dedupe (Junaid)
-- [ ] L4 retry loop, the `attempts` entry shape (`{ replicaId, kind, status? }`,
+- [x] L1 / L2 reviewed as merged (Junaid, 2026-09-08). Found and fixed one real
+      bug in `eject()` while reviewing: a second `eject()` call on an
+      already-`unhealthy` replica was resetting `consecSuccesses` to 0 even
+      when a real health probe had already started counting toward recovery
+      (e.g. a stale request, in flight before an earlier failure already
+      ejected the same replica, arrives late and calls `eject` again). That
+      erased earned recovery progress and delayed recovery by a full extra
+      probe cycle, contradicting L2's own "cannot rejoin on one lucky probe /
+      cannot be delayed by a duplicate ejection either" intent. Fixed: `eject`
+      is now a true no-op when the replica is already `unhealthy`, it neither
+      touches the counters nor emits a transition. Regression test added. See
+      the PR that lands this entry.
+- [x] L3 `FailoverEvent` shape, the feed rules, the `reason`-means-skip dedupe
+      (Junaid, 2026-09-08): consistent as designed. Only `eject()` sets
+      `reason`; recovery is always poll-driven per L2 so it never carries one,
+      so there's no path where a recovered event could be double-recorded or
+      dropped. Agreed.
+- [x] L4 retry loop, the `attempts` entry shape (`{ replicaId, kind, status? }`,
       a change from the task split's `{ replicaId, error }` sketch), the
-      `502` vs `503 all_replicas_failed` split (Junaid)
-- [ ] `engine.route({ exclude })` signature (both)
-- [ ] `WR_MAX_RETRIES` default of 2 (both)
+      `502` vs `503 all_replicas_failed` split (Junaid, 2026-09-08): agreed.
+      The `attempts` shape change is a reasonable improvement over the task
+      split's sketch, and non-retryable-doesn't-eject is the right call.
+- [ ] `engine.route({ exclude })` signature (both — Junaid agrees, 2026-09-08; awaiting Arundhati)
+- [ ] `WR_MAX_RETRIES` default of 2 (both — Junaid agrees, 2026-09-08, matches PRD §10 exactly; awaiting Arundhati)
 
 Once every box is checked, L11 through L14 build against this doc.
