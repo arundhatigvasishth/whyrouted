@@ -279,7 +279,11 @@ retries over zero-loss-with-no-retry, so this is not solved in M3.
       `502` vs `503 all_replicas_failed` split (Junaid, 2026-09-08): agreed.
       The `attempts` shape change is a reasonable improvement over the task
       split's sketch, and non-retryable-doesn't-eject is the right call.
-- [ ] `engine.route({ exclude })` signature (both — Junaid agrees, 2026-09-08; awaiting Arundhati)
-- [ ] `WR_MAX_RETRIES` default of 2 (both — Junaid agrees, 2026-09-08, matches PRD §10 exactly; awaiting Arundhati)
+- [x] `engine.route({ exclude })` signature (both). Junaid 2026-09-08; Arundhati
+      2026-09-08: agreed. Optional opts keeps the M2 no-arg call working, and
+      filtering in the engine rather than `pick` is what keeps `RoutingStrategy`
+      frozen.
+- [x] `WR_MAX_RETRIES` default of 2 (both). Junaid 2026-09-08; Arundhati
+      2026-09-08: agreed, matches PRD section 10 (2 retries, 3 attempts total).
 
 Once every box is checked, L11 through L14 build against this doc.
