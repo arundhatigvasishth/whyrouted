@@ -5,6 +5,24 @@ when a choice would be expensive to reverse or isn't obvious from the code.
 
 ---
 
+## 2026-09-08: `RoutingStrategy` stays frozen through M3's retry loop
+
+`pick(candidates, weights)` does not grow an `exclude` parameter. Retry
+exclusion happens in the engine (`route({ exclude })`, L10), which filters
+`healthy` down to `healthy minus alreadyTried` *before* calling `strategy.pick`
+on the smaller candidate set.
+
+**Why:** a strategy's whole job is scoring/picking from whatever candidate set
+it's handed; teaching it to also know about "replicas already tried this
+request" would blur that boundary and require every current and future
+strategy (M5b's live-swapped ones included) to implement retry-awareness
+individually. Filtering once in the engine keeps strategies exactly as simple
+as M2 left them.
+
+**Revisit when:** never expected to. If a strategy ever needs to *reason*
+about the exclusion set (not just avoid it), that is a signal worth stopping
+for, same as the adapter boundary's "if it needs a third method" note.
+
 ## 2026-09-06: default routing strategy is least-loaded
 
 The engine starts on `least-loaded` unless `WR_ROUTING_STRATEGY` says otherwise.
