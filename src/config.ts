@@ -5,9 +5,12 @@
  * fills in defaults, and validates. `main.ts` calls `loadConfig()` once at
  * startup and passes narrow slices down, no other module imports `Config`.
  *
- * The M1 shape and defaults are fixed by docs/milestones/m1/shared-contract.md.
- * The routing fields (strategy, scoring weights) were added for M2, see
- * docs/milestones/m2/shared-contract.md.
+ * The M1 shape is fixed by docs/milestones/m1/shared-contract.md. The routing
+ * fields (strategy, scoring weights) were added for M2, see
+ * docs/milestones/m2/shared-contract.md. `healthIntervalMs` / `healthTimeoutMs`
+ * defaults were retuned for M3 against measured real probe latency; see
+ * docs/decisions.md, "health-check interval and timeout retuned against
+ * measured probe latency".
  */
 
 import type { Replica } from "./types.js";
@@ -43,8 +46,8 @@ export const DEFAULT_CONFIG: Config = {
   fleetSize: 4,
   basePort: 8001,
   statusPort: 8080,
-  healthIntervalMs: 1000,
-  healthTimeoutMs: 500,
+  healthIntervalMs: 500,
+  healthTimeoutMs: 200,
   unhealthyThreshold: 3,
   healthyThreshold: 2,
   routingStrategy: "least-loaded",

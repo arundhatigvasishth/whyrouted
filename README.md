@@ -119,8 +119,8 @@ All environment variables are optional; sane defaults are built in.
 | `WR_FLEET_SIZE` | `4` | Number of simulated replicas |
 | `WR_BASE_PORT` | `8001` | First replica port (fleet occupies `basePort..basePort+fleetSize-1`) |
 | `WR_STATUS_PORT` | `8080` | Port the API server (`GET /status`, `POST /route`) listens on |
-| `WR_HEALTH_INTERVAL_MS` | `1000` | How often the scheduler polls each replica |
-| `WR_HEALTH_TIMEOUT_MS` | `500` | Per-probe timeout (must be less than the interval) |
+| `WR_HEALTH_INTERVAL_MS` | `500` | How often the scheduler polls each replica |
+| `WR_HEALTH_TIMEOUT_MS` | `200` | Per-probe timeout (must be less than the interval) |
 | `WR_UNHEALTHY_THRESHOLD` | `3` | Consecutive failed probes before a replica is marked `unhealthy` |
 | `WR_HEALTHY_THRESHOLD` | `2` | Consecutive successful probes before it recovers to `healthy` |
 | `WR_ROUTING_STRATEGY` | `least-loaded` | `round-robin`, `least-loaded`, or `latency-weighted` |
