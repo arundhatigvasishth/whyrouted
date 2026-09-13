@@ -107,14 +107,24 @@ export class HealthScheduler {
    * drives the hysteresis state machine and `onTransition`, same as a
    * poll-driven transition would; it does no logging of its own.
    *
-   * No-ops (still calls `sink.setHealth` idempotently) if the replica is
-   * already `unhealthy`. Throws on an unregistered replica id.
+   * A true no-op if the replica is already `unhealthy`: it does not touch
+   * `consecFailures` / `consecSuccesses` in that case. This matters because
+   * the retry loop (L4) can call `eject` more than once for the same replica
+   * (concurrent requests failing independently, or a stale request that was
+   * in flight before an earlier failure already ejected it). If a second
+   * eject reset `consecSuccesses` after a real health probe had already
+   * started counting toward recovery, it would erase that progress and delay
+   * recovery by a full extra probe cycle — a duplicate/stale ejection should
+   * never be able to undo work a clean probe already did. Throws on an
+   * unregistered replica id.
    */
   eject(replicaId: string, reason: string): void {
     const state = this.hysteresis.get(replicaId);
     if (state === undefined) {
       throw new Error(`cannot eject unknown replica "${replicaId}"`);
     }
+    if (state.health === "unhealthy") return;
+
     const at = this.now().toISOString();
     const from = state.health;
 
@@ -131,9 +141,7 @@ export class HealthScheduler {
     });
     this.opts.sink.setHealth(replicaId, "unhealthy");
 
-    if (from !== "unhealthy") {
-      this.opts.onTransition?.({ replicaId, from, to: "unhealthy", at, reason });
-    }
+    this.opts.onTransition?.({ replicaId, from, to: "unhealthy", at, reason });
   }
 
   /**
