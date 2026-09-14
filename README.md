@@ -159,6 +159,24 @@ Once a killed replica is `unhealthy`, `POST /route` stops picking it. Send a
 few `/route` calls after the kill and you'll see every response come back from
 one of the survivors.
 
+### Infer-only failure (for testing request-driven ejection)
+
+`/admin/kill` fails both `/health` and `/infer`, so the health scheduler is
+what ejects the replica, 1.5s worst case at the defaults. To see the *other*
+failover path, request-driven ejection (M3): a live request fails immediately
+against a replica whose health checks are still passing.
+
+```
+# replica-1's /health still returns 200; only /infer starts failing
+curl -X POST http://127.0.0.1:8001/admin/fail-infer
+
+# /status still shows replica-1 healthy right after this
+curl http://127.0.0.1:8080/status
+
+# a single /admin/revive clears either fault mode
+curl -X POST http://127.0.0.1:8001/admin/revive
+```
+
 ## Running the fleet standalone
 
 To run just the simulated replicas without the rest of the system (e.g. for

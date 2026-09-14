@@ -6,15 +6,20 @@
  * nothing above the adapter boundary changes — that swap is the project's core
  * architectural bet (PRD §6).
  *
- * HTTP surface (docs/milestones/m1/shared-contract.md, "Simulated replica HTTP surface"):
- *   GET  /health        -> 200 { inFlight }            — liveness + self-reported load
- *   POST /infer          -> 200 { response, latencyMs } — synthetic inference call
- *   POST /admin/kill     -> 200 { killed: true }        — start failing every request
- *   POST /admin/revive   -> 200 { killed: false }       — recover
+ * HTTP surface (docs/milestones/m1/shared-contract.md, "Simulated replica HTTP surface";
+ * /admin/fail-infer added for M3, L8):
+ *   GET  /health           -> 200 { inFlight }            — liveness + self-reported load
+ *   POST /infer             -> 200 { response, latencyMs } — synthetic inference call
+ *   POST /admin/kill        -> 200 { killed, inferFailing } — start failing every request (/health + /infer)
+ *   POST /admin/fail-infer  -> 200 { killed, inferFailing } — fail only /infer with 503; /health stays fine
+ *   POST /admin/revive      -> 200 { killed, inferFailing } — clear either fault mode, back to fully healthy
  *
- * Kill is binary — a killed replica answers /health and /infer with 503 (no
- * partial degradation). That's all M3's failover demo needs; richer failure
- * modes come later.
+ * Both fault modes are binary — no partial degradation, no configurable error
+ * rate. `kill` is the M1 fault: everything fails, so the health scheduler
+ * naturally ejects it. `fail-infer` is the M3 addition: only live requests
+ * fail while health checks keep passing, so request-driven ejection (L2) can
+ * be exercised and tested in isolation, without the health-check path also
+ * reacting to the same failure a few probes later.
  *
  * Not here yet:
  *   - spawning a fleet of these              — src/replica/launch.ts
@@ -61,6 +66,8 @@ export function createReplicaApp(id: string, profile?: SyntheticProfile): Expres
   let inFlight = 0;
   /** When true, every /health and /infer call fails with 503. */
   let killed = false;
+  /** When true, only /infer fails with 503; /health is unaffected (L8, M3). */
+  let inferFailing = false;
 
   app.get("/health", (_req, res) => {
     if (killed) {
@@ -68,22 +75,29 @@ export function createReplicaApp(id: string, profile?: SyntheticProfile): Expres
       return;
     }
     // real concurrent load plus the replica's slow synthetic baseline
+    // (unaffected by inferFailing: /health is deliberately still fine)
     res.json({ inFlight: inFlight + synthetic.baselineLoad() });
   });
 
   app.post("/admin/kill", (_req, res) => {
     killed = true;
-    res.json({ killed });
+    res.json({ killed, inferFailing });
+  });
+
+  app.post("/admin/fail-infer", (_req, res) => {
+    inferFailing = true;
+    res.json({ killed, inferFailing });
   });
 
   app.post("/admin/revive", (_req, res) => {
     killed = false;
-    res.json({ killed });
+    inferFailing = false;
+    res.json({ killed, inferFailing });
   });
 
   app.post("/infer", async (_req, res) => {
-    if (killed) {
-      res.status(503).json({ error: "killed" });
+    if (killed || inferFailing) {
+      res.status(503).json({ error: killed ? "killed" : "infer_failing" });
       return;
     }
     inFlight += 1;

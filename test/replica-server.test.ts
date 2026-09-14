@@ -88,7 +88,7 @@ describe("kill / revive switch", () => {
 
     const killed = await post(`${replica.url}/admin/kill`);
     expect(killed.status).toBe(200);
-    expect(await killed.json()).toEqual({ killed: true });
+    expect(await killed.json()).toEqual({ killed: true, inferFailing: false });
 
     expect((await fetch(`${replica.url}/health`)).status).toBe(503);
     expect((await post(`${replica.url}/infer`)).status).toBe(503);
@@ -100,7 +100,7 @@ describe("kill / revive switch", () => {
     await post(`${replica.url}/admin/kill`);
     const revived = await post(`${replica.url}/admin/revive`);
     expect(revived.status).toBe(200);
-    expect(await revived.json()).toEqual({ killed: false });
+    expect(await revived.json()).toEqual({ killed: false, inferFailing: false });
 
     expect((await fetch(`${replica.url}/health`)).status).toBe(200);
     expect((await post(`${replica.url}/infer`)).status).toBe(200);
@@ -116,5 +116,54 @@ describe("kill / revive switch", () => {
     await post(`${replica.url}/admin/revive`);
     await post(`${replica.url}/admin/revive`);
     expect((await fetch(`${replica.url}/health`)).status).toBe(200);
+  });
+});
+
+describe("infer-only fault mode (L8)", () => {
+  const post = (url: string) => fetch(url, { method: "POST" });
+
+  it("fails /infer with 503 but leaves /health passing", async () => {
+    const replica = await start();
+
+    const failed = await post(`${replica.url}/admin/fail-infer`);
+    expect(failed.status).toBe(200);
+    expect(await failed.json()).toEqual({ killed: false, inferFailing: true });
+
+    expect((await fetch(`${replica.url}/health`)).status).toBe(200);
+    expect((await post(`${replica.url}/infer`)).status).toBe(503);
+  });
+
+  it("recovers /infer after /admin/revive without ever touching /health", async () => {
+    const replica = await start();
+
+    await post(`${replica.url}/admin/fail-infer`);
+    const revived = await post(`${replica.url}/admin/revive`);
+    expect(await revived.json()).toEqual({ killed: false, inferFailing: false });
+
+    expect((await post(`${replica.url}/infer`)).status).toBe(200);
+    expect((await fetch(`${replica.url}/health`)).status).toBe(200);
+  });
+
+  it("is independent of kill: killing after fail-infer still fails /health too", async () => {
+    const replica = await start();
+
+    await post(`${replica.url}/admin/fail-infer`);
+    expect((await fetch(`${replica.url}/health`)).status).toBe(200);
+
+    await post(`${replica.url}/admin/kill`);
+    expect((await fetch(`${replica.url}/health`)).status).toBe(503);
+    expect((await post(`${replica.url}/infer`)).status).toBe(503);
+  });
+
+  it("a single /admin/revive clears both fault modes at once", async () => {
+    const replica = await start();
+
+    await post(`${replica.url}/admin/kill`);
+    await post(`${replica.url}/admin/fail-infer`);
+
+    const revived = await post(`${replica.url}/admin/revive`);
+    expect(await revived.json()).toEqual({ killed: false, inferFailing: false });
+    expect((await fetch(`${replica.url}/health`)).status).toBe(200);
+    expect((await post(`${replica.url}/infer`)).status).toBe(200);
   });
 });
