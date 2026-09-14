@@ -169,4 +169,68 @@ describe("routing engine", () => {
     });
     expect(engine.route()).toEqual({ ok: false, error: "no_routable_replica" });
   });
+
+  describe("candidate exclusion (M3, L10)", () => {
+    it("filters excluded replicas out before delegating to the strategy", () => {
+      const engine = createRoutingEngine({
+        registry: fakeRegistry([
+          replica("replica-1", "healthy", 0),
+          replica("replica-2", "healthy", 5),
+        ]),
+        config: fakeConfig("least-loaded"),
+      });
+      // replica-1 would normally win (lowest inFlight), but it's excluded.
+      expect(engine.route({ exclude: ["replica-1"] })).toEqual({
+        ok: true,
+        replicaId: "replica-2",
+        strategy: "least-loaded",
+      });
+    });
+
+    it("reports no_routable_replica when exclude empties the healthy set", () => {
+      const engine = createRoutingEngine({
+        registry: fakeRegistry([replica("replica-1", "healthy")]),
+        config: fakeConfig("least-loaded"),
+      });
+      expect(engine.route({ exclude: ["replica-1"] })).toEqual({
+        ok: false,
+        error: "no_routable_replica",
+      });
+    });
+
+    it("reports no_healthy_replicas, not no_routable_replica, when there was nothing healthy regardless of exclude", () => {
+      const engine = createRoutingEngine({
+        registry: fakeRegistry([replica("replica-1", "unhealthy")]),
+        config: fakeConfig("least-loaded"),
+      });
+      expect(engine.route({ exclude: ["replica-2"] })).toEqual({
+        ok: false,
+        error: "no_healthy_replicas",
+      });
+    });
+
+    it("ignores an empty exclude list, same as no options at all", () => {
+      const engine = createRoutingEngine({
+        registry: fakeRegistry([replica("replica-1", "healthy")]),
+        config: fakeConfig("least-loaded"),
+      });
+      expect(engine.route({ exclude: [] })).toEqual({
+        ok: true,
+        replicaId: "replica-1",
+        strategy: "least-loaded",
+      });
+    });
+
+    it("the M2 no-arg call still works", () => {
+      const engine = createRoutingEngine({
+        registry: fakeRegistry([replica("replica-1", "healthy")]),
+        config: fakeConfig("least-loaded"),
+      });
+      expect(engine.route()).toEqual({
+        ok: true,
+        replicaId: "replica-1",
+        strategy: "least-loaded",
+      });
+    });
+  });
 });
