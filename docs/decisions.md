@@ -5,6 +5,41 @@ when a choice would be expensive to reverse or isn't obvious from the code.
 
 ---
 
+## 2026-09-13: health-check interval and timeout retuned against measured probe latency
+
+`WR_HEALTH_INTERVAL_MS` 1000 -> 500, `WR_HEALTH_TIMEOUT_MS` 500 -> 200.
+`WR_UNHEALTHY_THRESHOLD` (N=3) and `WR_HEALTHY_THRESHOLD` (M=2) are unchanged.
+
+**Measured (L7):** real `GET /health` round-trip across a 4-replica local
+fleet under continuous background `/infer` load, 1200 samples: p50 1ms, p90
+3ms, p99 5ms, max 51ms. Every sample is far under even the new 200ms timeout,
+so tightening the timeout carries no real risk of a slow-but-alive replica
+being misclassified as down.
+
+**Why the interval moved, not the thresholds:** M3's request-driven ejection
+(`HealthScheduler.eject`, L2) is now what hits the PRD §8 "<1s from replica
+death to traffic shed" target for a replica that's actively serving traffic —
+a live request failure ejects it immediately, no polling involved. The poll
+loop's job narrowed to being the **backstop**: catching a replica that dies
+with zero traffic flowing through it, where nothing ever calls `eject`. Since
+measured probe latency is negligible, that backstop can run twice as often at
+effectively no added cost, cutting its detection time from `3 * 1000ms = 3s`
+to `3 * 500ms = 1.5s` and its recovery time from `2 * 1000ms = 2s` to
+`2 * 500ms = 1s`, without changing how many consecutive results it takes to
+flip either way.
+
+**Why the thresholds didn't move:** N and M control flap resistance, not
+speed, and nothing about the measured latency argues for a different flap
+tolerance. Lowering N to hit "<1s" for the backstop too was considered and
+rejected: the backstop is explicitly not the path carrying the PRD's <1s
+requirement anymore (request-driven ejection is), so shaving N for a case
+that's already a secondary safety net isn't worth the extra flap risk under
+real (non-local) network jitter this measurement can't see.
+
+**Revisit when:** real network conditions (not loopback) are measured, e.g.
+once Phase 2's real Ollama/vLLM adapter is in play, or if the backstop path's
+~1.5s detection time turns out to matter for a specific demo scenario.
+
 ## 2026-09-08: `RoutingStrategy` stays frozen through M3's retry loop
 
 `pick(candidates, weights)` does not grow an `exclude` parameter. Retry
@@ -116,8 +151,8 @@ to `healthy` after 2 consecutive successes.
 **Why:** starting values that stop a single blip from flapping a replica in and
 out of rotation. Not derived from measurement.
 
-**Revisit when:** M3, tuned against observed real health-check latency to hit the
-"<1s failover detection" target without flapping.
+**Superseded by:** the 2026-09-13 entry below, once M3's request-driven
+ejection changed what this interval is actually responsible for.
 
 ## 2026-08-31: real replicas (Ollama / vLLM) stay local-only
 

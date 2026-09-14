@@ -245,9 +245,11 @@ retries over zero-loss-with-no-retry, so this is not solved in M3.
 - **`RegistryStore` is still synchronous** (M1 deferral 1). First real need is
   M5a. The retry loop and the event store are written synchronously and will
   grow `await` with everything else when Redis lands.
-- **Hysteresis thresholds** (`N` / `M` / interval) are still the un-measured
-  M1 starting values. L7 tunes them against real probe latency and adds the
-  `docs/decisions.md` entry; that is a separate task, not part of this contract.
+- **Hysteresis interval retuned, thresholds unchanged (L7, 2026-09-13).**
+  `WR_HEALTH_INTERVAL_MS` 1000 -> 500, `WR_HEALTH_TIMEOUT_MS` 500 -> 200,
+  against measured real probe latency (p99 5ms, max 51ms locally). `N`/`M`
+  stayed at 3/2: they control flap resistance, not speed, and nothing in the
+  measurement argued for a different tolerance. See `docs/decisions.md`.
 - **`route()` still takes no request context.** Session or affinity routing
   (M4+) will change the signature again.
 
