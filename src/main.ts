@@ -20,6 +20,7 @@ import { HealthScheduler } from "./health/scheduler.js";
 import { createRoutingConfig } from "./routing/config.js";
 import { createRoutingEngine } from "./routing/engine.js";
 import { startStatusServer, type RunningStatusServer } from "./api/server.js";
+import { createFailoverLog } from "./events/failover-log.js";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -61,6 +62,11 @@ async function main(): Promise<void> {
     healthTimeoutMs: config.healthTimeoutMs,
   });
 
+  const failoverLog = createFailoverLog({
+    unhealthyThreshold: config.unhealthyThreshold,
+    healthyThreshold: config.healthyThreshold,
+  });
+
   const scheduler = new HealthScheduler({
     adapter,
     sink: registry,
@@ -68,8 +74,10 @@ async function main(): Promise<void> {
     intervalMs: config.healthIntervalMs,
     unhealthyThreshold: config.unhealthyThreshold,
     healthyThreshold: config.healthyThreshold,
-    onTransition: (t) =>
-      console.log(`${t.replicaId}: ${t.from} -> ${t.to}${t.reason ? ` (${t.reason})` : ""}`),
+    onTransition: (t) => {
+      console.log(`${t.replicaId}: ${t.from} -> ${t.to}${t.reason ? ` (${t.reason})` : ""}`);
+      failoverLog.handleTransition(t);
+    },
   });
   scheduler.start();
 
@@ -83,6 +91,9 @@ async function main(): Promise<void> {
     store: registry,
     engine,
     adapter,
+    scheduler,
+    failoverLog,
+    maxRetries: config.maxRetries,
     port: config.statusPort,
     host: config.host,
   });
