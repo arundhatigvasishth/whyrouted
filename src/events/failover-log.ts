@@ -8,10 +8,20 @@
  *     transition that carries a `reason` came from `eject()` (a
  *     request-driven ejection, L2) and is skipped here, because the retry
  *     loop (L11) already recorded it directly with `trigger:
- *     "request_failure"` — recording it again on the transition would
- *     double it.
+ *     "request_failure"`, recording it again on the transition would double
+ *     it.
  *   - Request-driven ejections are recorded directly by the retry loop via
  *     `record()`.
+ *
+ * One deviation from the shared contract's literal wording, found while
+ * writing the M3 integration test (L17): the contract says "a transition to
+ * healthy becomes recovered" with no qualifier, but a replica's first-ever
+ * `unknown -> healthy` transition at fleet startup is not a recovery, it was
+ * never ejected. Recording it as one would flood M5a's failover history with
+ * a spurious "recovered" event per replica on every boot. This only treats
+ * `unhealthy -> healthy` as a recovery, matching the scheduler's own
+ * docstring ("unhealthy -> healthy (recovery)" vs. "unknown -> healthy" as a
+ * separate, unlabelled case). Flagged for Junaid to confirm.
  *
  * Storage is in-memory and unbounded for M3: a demo-scale fleet produces a
  * handful of events. Persistence and a retention cap are M4 / M5 concerns.
@@ -72,7 +82,7 @@ export function createFailoverLog(opts: FailoverLogOptions): FailoverLogStore {
           trigger: "health_check",
           reason: `${opts.unhealthyThreshold} consecutive failed probes`,
         });
-      } else if (transition.to === "healthy") {
+      } else if (transition.to === "healthy" && transition.from === "unhealthy") {
         events.push({
           id: makeId(),
           replicaId: transition.replicaId,

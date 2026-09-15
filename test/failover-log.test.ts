@@ -69,6 +69,17 @@ describe("failover log", () => {
     ]);
   });
 
+  it("does not record a replica's first unknown -> healthy transition as a recovery", () => {
+    const l = log();
+    l.handleTransition({
+      replicaId: "replica-1",
+      from: "unknown",
+      to: "healthy",
+      at: "2026-09-14T00:00:00.000Z",
+    });
+    expect(l.query({})).toEqual([]);
+  });
+
   it("skips a transition that carries a reason, already recorded by the retry loop's direct record()", () => {
     const l = log();
     l.handleTransition({
