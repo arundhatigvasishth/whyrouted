@@ -32,6 +32,16 @@ export interface RoutingEngineDeps {
   config: RoutingConfig;
 }
 
+export interface RouteOptions {
+  /**
+   * Replica ids to leave out of the candidate pool for this call (M3, L10):
+   * the retry loop's already-tried set. Filtered out of `healthy` before the
+   * strategy ever sees the candidates, so `RoutingStrategy` stays ignorant of
+   * failover (docs/milestones/m3/shared-contract.md, "Frozen by this contract").
+   */
+  exclude?: readonly string[];
+}
+
 export interface RoutingEngine {
   /**
    * Pick a replica for the next request.
@@ -39,11 +49,12 @@ export interface RoutingEngine {
    * - `no_healthy_replicas`: the registry has no replica in `healthy` state.
    * - `no_routable_replica`: there were healthy candidates, but the active
    *   strategy still couldn't pick one (e.g. latency-weighted with no
-   *   candidate that has a latency measurement yet). Distinct from
-   *   `no_healthy_replicas` because it is not true that the fleet is down,
-   *   K11's `POST /route` must not report the same 503 body for both.
+   *   candidate that has a latency measurement yet), or `exclude` filtered
+   *   every healthy candidate out. Distinct from `no_healthy_replicas`
+   *   because it is not true that the fleet is down, K11's `POST /route`
+   *   must not report the same 503 body for both.
    */
-  route(): RouteResult;
+  route(opts?: RouteOptions): RouteResult;
 }
 
 /**
@@ -69,7 +80,7 @@ export function createRoutingEngine(deps: RoutingEngineDeps): RoutingEngine {
   };
 
   return {
-    route(): RouteResult {
+    route(opts?: RouteOptions): RouteResult {
       const healthy = deps.registry
         .getSnapshot()
         .replicas.filter((replica) => replica.runtime.health === "healthy");
@@ -77,8 +88,17 @@ export function createRoutingEngine(deps: RoutingEngineDeps): RoutingEngine {
         return { ok: false, error: "no_healthy_replicas" };
       }
 
+      const exclude = opts?.exclude;
+      const candidates =
+        exclude === undefined || exclude.length === 0
+          ? healthy
+          : healthy.filter((replica) => !exclude.includes(replica.id));
+      if (candidates.length === 0) {
+        return { ok: false, error: "no_routable_replica" };
+      }
+
       const strategy = strategyFor(deps.config.getStrategyName());
-      const replicaId = strategy.pick(healthy, deps.config.getWeights());
+      const replicaId = strategy.pick(candidates, deps.config.getWeights());
       if (replicaId === null) {
         return { ok: false, error: "no_routable_replica" };
       }

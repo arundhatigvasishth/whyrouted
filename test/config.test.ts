@@ -19,6 +19,7 @@ describe("loadConfig", () => {
       WR_ROUTING_STRATEGY: "latency-weighted",
       WR_LOAD_WEIGHT: "0.7",
       WR_LATENCY_WEIGHT: "0.3",
+      WR_MAX_RETRIES: "4",
     });
     expect(config).toEqual({
       host: "0.0.0.0",
@@ -31,7 +32,20 @@ describe("loadConfig", () => {
       healthyThreshold: 1,
       routingStrategy: "latency-weighted",
       scoringWeights: { loadWeight: 0.7, latencyWeight: 0.3 },
+      maxRetries: 4,
     });
+  });
+
+  it("defaults WR_MAX_RETRIES to 2", () => {
+    expect(loadConfig({}).maxRetries).toBe(2);
+  });
+
+  it("accepts WR_MAX_RETRIES of 0 (no retry, M2 behaviour)", () => {
+    expect(loadConfig({ WR_MAX_RETRIES: "0" }).maxRetries).toBe(0);
+  });
+
+  it("rejects a negative WR_MAX_RETRIES", () => {
+    expect(() => loadConfig({ WR_MAX_RETRIES: "-1" })).toThrow(/WR_MAX_RETRIES must be >= 0/);
   });
 
   it("defaults the routing strategy to least-loaded and the weights to 1/1", () => {

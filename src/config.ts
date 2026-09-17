@@ -10,7 +10,8 @@
  * docs/milestones/m2/shared-contract.md. `healthIntervalMs` / `healthTimeoutMs`
  * defaults were retuned for M3 against measured real probe latency; see
  * docs/decisions.md, "health-check interval and timeout retuned against
- * measured probe latency".
+ * measured probe latency". `maxRetries` was added for M3's retry loop (L13),
+ * see docs/milestones/m3/shared-contract.md.
  */
 
 import type { Replica } from "./types.js";
@@ -39,6 +40,8 @@ export interface Config {
   routingStrategy: StrategyName;
   /** Scoring weights the engine starts with. Live-tunable at runtime (M5b). */
   scoringWeights: ScoringWeights;
+  /** Retries `POST /route` makes against the next-best replica before giving up. `0` disables retry (M2 behaviour). */
+  maxRetries: number;
 }
 
 export const DEFAULT_CONFIG: Config = {
@@ -52,6 +55,7 @@ export const DEFAULT_CONFIG: Config = {
   healthyThreshold: 2,
   routingStrategy: "least-loaded",
   scoringWeights: { ...DEFAULT_SCORING_WEIGHTS },
+  maxRetries: 2,
 };
 
 type Env = Record<string, string | undefined>;
@@ -103,6 +107,7 @@ export function loadConfig(env: Env = process.env): Config {
     unhealthyThreshold: readInt(env, "WR_UNHEALTHY_THRESHOLD", DEFAULT_CONFIG.unhealthyThreshold),
     healthyThreshold: readInt(env, "WR_HEALTHY_THRESHOLD", DEFAULT_CONFIG.healthyThreshold),
     routingStrategy: readStrategy(env, "WR_ROUTING_STRATEGY", DEFAULT_CONFIG.routingStrategy),
+    maxRetries: readInt(env, "WR_MAX_RETRIES", DEFAULT_CONFIG.maxRetries),
     scoringWeights: {
       loadWeight: readNumber(env, "WR_LOAD_WEIGHT", DEFAULT_CONFIG.scoringWeights.loadWeight),
       latencyWeight: readNumber(
@@ -148,6 +153,8 @@ function validate(c: Config): void {
 
   if (c.unhealthyThreshold < 1) errors.push("WR_UNHEALTHY_THRESHOLD must be >= 1");
   if (c.healthyThreshold < 1) errors.push("WR_HEALTHY_THRESHOLD must be >= 1");
+
+  if (c.maxRetries < 0) errors.push("WR_MAX_RETRIES must be >= 0");
 
   if (c.scoringWeights.loadWeight < 0) errors.push("WR_LOAD_WEIGHT must be >= 0");
   if (c.scoringWeights.latencyWeight < 0) errors.push("WR_LATENCY_WEIGHT must be >= 0");
