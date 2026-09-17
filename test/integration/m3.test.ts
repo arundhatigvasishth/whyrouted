@@ -1,17 +1,21 @@
 /**
- * M3 integration test (L17, pair task, draft).
+ * M3 integration test (L17, pair task).
  *
  * Builds the whole system the way `main.ts` wires it, real replica child
  * processes through `launchFleet`, a real `HttpReplicaAdapter` over HTTP, the
  * real `HealthScheduler`, engine, and API server, but in-process instead of
  * through a `main.ts` child process. That gives the test a live reference to
  * the `FailoverLog` instance, which `POST /route` and the scheduler both
- * write to, so it can assert on recorded events directly. There is no HTTP
- * surface for the failover log yet (M5a adds `get_failover_history`), so an
- * in-process build is the only way to check "a failover event was recorded"
- * without adding a test-only route. Open question for pairing: is that trade
- * worth it, or should this instead spawn `main.ts` like M1/M2's integration
- * tests and check ejection indirectly through `/status` and timing alone?
+ * write to, so it can assert on recorded events directly.
+ *
+ * Resolved (was an open question in the draft): stays in-process rather than
+ * spawning `main.ts`, since M5a's `get_failover_history` HTTP surface doesn't
+ * exist yet. Building a test-only route just to expose the log for one
+ * milestone would be more to maintain than the in-process build, and this
+ * test still exercises the real HTTP boundary between the client and
+ * `/route` (the part M1/M2's spawn-based tests are actually protecting) via
+ * real `fetch` calls. Revisit once M5a's real HTTP surface exists: at that
+ * point the spawn-based pattern becomes free again and this could switch.
  *
  * Drives continuous `POST /route` load, kills one replica mid-stream, and
  * asserts the M3 definition of done (docs/milestones/m3/task-split.md §9):
@@ -168,9 +172,15 @@ describe("M3 end to end", () => {
         .query({})
         .find((e) => e.replicaId === TARGET && e.kind === "recovered")!;
       expect(recovered.trigger).toBe("health_check");
-      // cannot rejoin on one lucky probe: at least one full poll interval must
-      // separate the two clean probes recovery needs
-      expect(new Date(recovered.at).getTime() - revivedAt).toBeGreaterThan(INTERVAL_MS * 0.5);
+      // cannot rejoin on one lucky probe: recovery needs HEALTHY_THRESHOLD (2)
+      // consecutive clean probes, so at least one full poll interval must
+      // separate the first post-revive probe from the second. The previous
+      // version of this assertion (> INTERVAL_MS * 0.5) would pass even if
+      // recovery fired on a single probe, since worst-case scheduling jitter
+      // alone could plausibly exceed half an interval; requiring a full
+      // interval is what actually distinguishes "needed 2 probes" from
+      // "needed 1".
+      expect(new Date(recovered.at).getTime() - revivedAt).toBeGreaterThanOrEqual(INTERVAL_MS);
 
       // a little more traffic post-recovery
       await sleep(200);
