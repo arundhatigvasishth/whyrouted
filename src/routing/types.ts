@@ -41,6 +41,39 @@ export const DEFAULT_SCORING_WEIGHTS: ScoringWeights = {
 
 export type StrategyName = "round-robin" | "least-loaded" | "latency-weighted";
 
+/**
+ * A single candidate's score inputs at decision time (M4, N1). Emitted by
+ * `RoutingStrategy.score()` for every candidate the strategy actually
+ * considered, never for one filtered out before it reached the strategy.
+ *
+ * `score` is unitless per strategy: lower always wins, matching the
+ * convention `pick()` already uses internally (lowest in-flight, lowest
+ * weighted score). It is only meaningful for ranking within one strategy's
+ * own output, not for comparing across strategies.
+ *
+ * `considered` is the literal `true`, not `boolean`: every entry is by
+ * definition a candidate the strategy considered, so there is no `false`
+ * case to represent.
+ */
+export interface CandidateScore {
+  replicaId: string;
+  inFlight: number;
+  latencyMs: number | null;
+  score: number;
+  considered: true;
+}
+
+/**
+ * A replica the engine filtered out before it ever reached a strategy's
+ * `score()` / `pick()` (M4, N3). Attached by the engine, never by a
+ * strategy: the engine is the one place that knows which replica was
+ * dropped and why (see engine.ts).
+ */
+export interface ExcludedCandidate {
+  replicaId: string;
+  reason: "unhealthy" | "already_tried";
+}
+
 export interface RoutingStrategy {
   readonly name: StrategyName;
   /**
@@ -51,6 +84,15 @@ export interface RoutingStrategy {
    * (see engine.ts); a strategy only ever reports "I have nothing," not why.
    */
   pick(candidates: ReplicaState[], weights: ScoringWeights): string | null;
+  /**
+   * Score every candidate this strategy actually considered, for capture
+   * only (M4, N1). Called by the engine alongside, not instead of, `pick()`,
+   * on the same `candidates` snapshot within one `route()` call. Must not
+   * mutate strategy state (round-robin's cursor in particular) and must not
+   * influence what `pick()` returns: read-only, additive to the frozen
+   * `pick()` contract (docs/decisions.md, 2026-09-23).
+   */
+  score(candidates: ReplicaState[], weights: ScoringWeights): CandidateScore[];
 }
 
 /**
