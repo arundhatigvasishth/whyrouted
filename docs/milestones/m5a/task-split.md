@@ -27,35 +27,50 @@ The natural seam is different in shape from M1 through M4's "pure logic vs.
 serving surface" split, because M5a has no pure-logic half: every one of the
 four tools is, at bottom, a query against an existing store. The seam that
 actually divides the work evenly is **protocol plumbing vs. query
-sophistication**:
+sophistication**, and the MCP server itself splits along that same seam
+rather than going to one person whole:
 
-- **Junaid, MCP Server & State Tools track:** stands up the actual MCP
-  server (`@modelcontextprotocol/sdk`, tool registration, the shared
-  grounding/error envelope every tool returns through), and implements the
-  two tools that are direct reads with no synthesis step:
-  `get_fleet_status()` (registry snapshot) and `get_failover_history` (a
-  time-range query already shaped exactly like `FailoverLog.query`, per M3).
-  This is a new interface-boundary layer, the same shape of work as the M1
-  adapter boundary or the M3 error taxonomy: define it once, cleanly, before
-  anyone builds on top of it. Continues from the M1 replica/health,
-  M2 scoring/strategy, and M3 detection/ejection tracks (owns `src/mcp/`
-  new, plus read access to `src/registry/`, `src/events/`).
-- **Arundhati, Decision Query & Explainability track:** the two tools that
-  require synthesis, not just a lookup: `explain_routing_decision`, which
-  turns a `Decision` record into a cited, prose explanation, and
+- **Junaid, MCP Server & State Tools track:** the server's outer shell,
+  transport, and lifecycle: stands up the actual MCP server
+  (`@modelcontextprotocol/sdk`), registers tools against it, wires it into
+  `main.ts` per O1. Then the two tools that are direct reads with no
+  synthesis step: `get_fleet_status()` (registry snapshot) and
+  `get_failover_history` (a time-range query already shaped exactly like
+  `FailoverLog.query`, per M3). This is a new interface-boundary layer, the
+  same shape of work as the M1 adapter boundary or the M3 error taxonomy:
+  define the transport once, cleanly, before anyone builds a tool on top of
+  it. Continues from the M1 replica/health, M2 scoring/strategy, and M3
+  detection/ejection tracks (owns `src/mcp/server.ts`, plus read access to
+  `src/registry/`, `src/events/`).
+- **Arundhati, Decision Query & Explainability track:** the server's inner
+  shell, the grounding envelope and dispatch wrapper every tool call goes
+  through (`src/mcp/types.ts`), since it is the piece her own two tools lean
+  on hardest, PRD §8's explainability metric lives or dies on this envelope
+  being enforced centrally, not left to each tool's discretion. Then the two
+  tools that require synthesis, not just a lookup: `explain_routing_decision`,
+  which turns a `Decision` record into a cited, prose explanation, and
   `query_decisions`, which answers a free-form natural-language question
   against decision-log data, per PRD §10, supporting both point lookups
   ("why did request X go where it did") and aggregate stats ("what happened
-  to p99 between 3:00 and 3:10"). This is the direct continuation of the M4
-  Decision Log track (owns `src/decisions/`, extends into `src/mcp/tools/`
-  for these two tools specifically).
+  to p99 between 3:00 and 3:10"). Direct continuation of the M4 Decision Log
+  track (owns `src/decisions/`, `src/mcp/types.ts`, and
+  `src/mcp/tools/{explain-routing-decision,query-decisions}.ts`).
+
+Splitting the scaffold itself this way, transport to Junaid, grounding
+semantics to Arundhati, rather than handing the whole thing to whoever's
+track it superficially looks like "protocol infrastructure," means neither
+of you builds in isolation from what the other's tools actually need: O5's
+tool registration calls into O6's dispatch wrapper from day one, so the seam
+between them has to be agreed, not just assigned.
 
 This is not a data-store-ownership split (all four tools ultimately read
 stores Arundhati has built across M1-M4: registry, failover log, decision
-log), it is a split by **what kind of work each tool requires**: two tools
+log), it is a split by **what kind of work each piece requires**: two tools
 are a lookup behind a schema, two require actually reasoning about the data
-before answering. Balancing on that axis, not on "which store," is what
-keeps this even; see §7.
+before answering, and the scaffold itself splits into "how a call gets in"
+versus "how an answer is guaranteed honest." Balancing on that axis, not on
+"which store" or "who touches `src/mcp/` first," is what keeps this even;
+see §7.
 
 Per the M1 balance note, Junaid's extra load-bearing assist for the
 project's overall PRD-suggested split (§11) lands at M5b and M6, not here.
@@ -104,7 +119,7 @@ Arundhati drafts O3 and O4, both review the whole thing.
 | Item | File | Notes |
 |---|---|---|
 | **O1** MCP server process shape | `docs/decisions.md` | Resolves "the one hard design question" above: in-process, same Node process as the API server, direct references to the existing store instances. No Redis, no second process, for M5a. |
-| **O2** Tool response envelope | `src/mcp/types.ts` | Every read tool returns through one shape so the grounding constraint (PRD §5.6: "if the data doesn't support an answer, the tool says so explicitly rather than inferring") is enforced structurally, not left to each tool's discretion. Something like `ToolResult<T> = { ok: true; data: T; groundedIn: { source: "registry" \| "failover_log" \| "decision_log"; queriedAt: string } } \| { ok: false; reason: string }`. Exact shape is O1/O2's job to nail down together; the constraint is that a caller can always tell whether an answer came from real data or a "no data for that" response, never a fabricated middle ground. |
+| **O2** Tool response envelope | `src/mcp/types.ts` (design here; implemented as O6) | Every read tool returns through one shape so the grounding constraint (PRD §5.6: "if the data doesn't support an answer, the tool says so explicitly rather than inferring") is enforced structurally, not left to each tool's discretion. Something like `ToolResult<T> = { ok: true; data: T; groundedIn: { source: "registry" \| "failover_log" \| "decision_log"; queriedAt: string } } \| { ok: false; reason: string }`. Exact shape is O1/O2's job to nail down together; the constraint is that a caller can always tell whether an answer came from real data or a "no data for that" response, never a fabricated middle ground. Junaid drafts the shape here since it's paired with O1; Arundhati owns building it (O6), since her tools are the ones that most need it enforced correctly. |
 | **O3** `explain_routing_decision` output shape | `src/mcp/tools/explain-routing-decision.ts` (signature only) | What "cited" means concretely: does the tool return prose with inline references to specific `DecisionRound` fields, or structured data (the full `Decision` plus a short human-readable summary) and let the MCP client's own model do the prose? PRD §5.6 says "grounded, cited explanation," which doesn't by itself decide whether prose generation happens in this tool or in the calling client. Settle this before O11 is built: it changes whether this tool needs any LLM access of its own. |
 | **O4** `query_decisions` NL-to-query approach | `src/mcp/tools/query-decisions.ts` (signature only) | The harder version of O3's question: does `query_decisions` parse `natural_language_query` itself (keyword/date-range extraction into a structured `DecisionLog.query` call, no LLM in the router), or does it call out to an LLM to interpret the question and ground its answer against fetched decision-log data? The PRD's tech stack (§7) lists no LLM dependency for the routing service itself, only for the MCP client side (§5.6, "MCP client... Claude Desktop"), which is a real signal toward "no LLM call inside the tool," but this is explicitly not decided by that alone and needs to be settled here, not assumed by whoever starts building O12 first. |
 
@@ -130,11 +145,10 @@ reopened the interface itself.
 
 | # | Task | Deliverable |
 |---|---|---|
-| O5 | **MCP server scaffold** | `src/mcp/server.ts`: stand up the server using `@modelcontextprotocol/sdk`, register tools against it, wire it into `main.ts` per O1 (in-process, same store instances the API server already holds). No transport-layer redesign: this is additive to `main.ts`, the same shape as M3's failover-log wiring or M4's decision-log wiring. |
-| O6 | **Tool dispatch + grounding envelope** | `src/mcp/types.ts`: implement O2's `ToolResult` shape and a small dispatch helper every tool call goes through, so "no data, say so" is enforced once, centrally, not re-implemented per tool. |
-| O7 | **`get_fleet_status()`** | `src/mcp/tools/get-fleet-status.ts`: reads `RegistryStore.getSnapshot()` directly, wraps it in O2's envelope. The most direct possible read tool; exists to prove the scaffold works end to end before O8's slightly more involved range query. |
+| O5 | **MCP server scaffold** | `src/mcp/server.ts`: stand up the server using `@modelcontextprotocol/sdk`, register tools against it (each registration calling into O6's dispatch wrapper, built against a stub until it lands), wire it into `main.ts` per O1 (in-process, same store instances the API server already holds). No transport-layer redesign: this is additive to `main.ts`, the same shape as M3's failover-log wiring or M4's decision-log wiring. |
+| O7 | **`get_fleet_status()`** | `src/mcp/tools/get-fleet-status.ts`: reads `RegistryStore.getSnapshot()` directly, wraps it through O6's dispatch wrapper. The most direct possible read tool; exists to prove the scaffold works end to end before O8's slightly more involved range query. |
 | O8 | **`get_failover_history(time_range)`** | `src/mcp/tools/get-failover-history.ts`: reads `FailoverLog.query({ from?, to? })`, normalizing whatever `time_range` shape O4's "also agree" note settles on into the store's native range shape. |
-| O9 | **Unit tests** | scaffold registers exactly the four M5a tools and no M5b action tools yet; grounding envelope correctly distinguishes a real result from a "no data" result; `get_fleet_status` matches a hand-built registry snapshot; `get_failover_history` against a seeded failover log, including an empty range and an out-of-range query returning no data cleanly. |
+| O9 | **Unit tests** | scaffold registers exactly the four M5a tools and no M5b action tools yet, and each registration is actually routed through O6's dispatch wrapper (not bypassed); `get_fleet_status` matches a hand-built registry snapshot; `get_failover_history` against a seeded failover log, including an empty range and an out-of-range query returning no data cleanly. |
 
 ---
 
@@ -142,11 +156,12 @@ reopened the interface itself.
 
 | # | Task | Deliverable |
 |---|---|---|
-| O10 | **`explain_routing_decision(request_id)`** | `src/mcp/tools/explain-routing-decision.ts`: `DecisionLog.get(requestId)`, then build the O3-shaped output. If `get()` returns `undefined`, the tool says so explicitly (O2's grounding envelope), it does not guess or return a similar-looking decision. |
+| O6 | **Tool dispatch + grounding envelope** | `src/mcp/types.ts`: implement O2's `ToolResult` shape and the dispatch wrapper every tool call goes through (Junaid's O5 registers each tool against it), so "no data, say so" is enforced once, centrally, not re-implemented per tool. Built first among this track's tasks: O10-O12 are written against it directly, not a stub, since this track owns it end to end. |
+| O10 | **`explain_routing_decision(request_id)`** | `src/mcp/tools/explain-routing-decision.ts`: `DecisionLog.get(requestId)`, then build the O3-shaped output through O6's envelope. If `get()` returns `undefined`, the tool says so explicitly, it does not guess or return a similar-looking decision. |
 | O11 | **`query_decisions(natural_language_query)`, point-lookup case** | `src/mcp/tools/query-decisions.ts`: the "why did request X go where it did" shape from PRD §10, built against O4's agreed approach. If O4 settles on no-LLM-in-the-router, this is largely a thin wrapper around O10's logic keyed off a request id extracted from the query text; if O4 settles on an LLM call, this is where that integration lives. |
 | O12 | **`query_decisions`, aggregate case** | Extends O11 to the "what happened to p99 between 3:00 and 3:10" shape from PRD §10: a time-range query over `DecisionLog.query({ from, to })` plus percentile computation over the returned decisions' latency data (latency itself lives on the M2/M3 response path, not on `Decision` directly, confirm in the shared contract whether `DecisionRound` needs a field for it or whether this reads through `attempts`/response data some other way, since `Decision` as currently shaped has no latency field at all). |
-| O13 | **Grounding-constraint enforcement for both tools** | Explicit test/assertion surface: a query with no matching data returns O2's "no data" shape, never a fabricated number or a plausible-sounding guess. This is the PRD §8 "Explainability accuracy: 100% of answers grounded in decision-log values" success metric, owned end to end by this track. |
-| O14 | **Unit tests** | `explain_routing_decision` for a real request id, an unknown one, and a multi-round retried decision (confirms the full retry story surfaces, not just the winning round); `query_decisions` point-lookup and aggregate cases against a seeded decision log, plus the grounding-constraint no-data case from O13. |
+| O13 | **Grounding-constraint enforcement for both tools** | Explicit test/assertion surface: a query with no matching data returns O6's "no data" shape, never a fabricated number or a plausible-sounding guess. This is the PRD §8 "Explainability accuracy: 100% of answers grounded in decision-log values" success metric, owned end to end by this track, natural extension of owning O6 in the first place. |
+| O14 | **Unit tests** | O6's dispatch wrapper in isolation (correctly distinguishes a real result from a "no data" result, independent of any one tool); `explain_routing_decision` for a real request id, an unknown one, and a multi-round retried decision (confirms the full retry story surfaces, not just the winning round); `query_decisions` point-lookup and aggregate cases against a seeded decision log, plus the grounding-constraint no-data case from O13. |
 
 ---
 
@@ -159,10 +174,14 @@ reopened the interface itself.
 | O17 | **MCP client demo wiring**: connect the running server to Claude Desktop (or `claude.ai`) per PRD §5.6, confirm all four tools are visible and callable from a real MCP client, not just from unit tests driving the tool functions directly. | pair, since this is the first time either track's work is exercised through the actual protocol rather than as a plain function call |
 | O18 | **M5a architecture review + README update** in `docs/architecture/m5a.md`, same shape as [`m4.md`](../../architecture/m4.md): confirm no action-tool (M5b) or dashboard (M6) concerns leaked in, confirm the grounding constraint holds end to end (PRD §8's explainability metric), report the in-process design decision and why, both sign off. Update the README with the MCP server and how to point Claude Desktop at it. | both |
 
-Everything else, O5 through O9 and O10 through O14, is single-owner. The
-only cross-track dependency is O5/O6 (Arundhati's tools need the scaffold
-and envelope to exist, even as a stub, before they can be registered) and
-O16/O17 at the end.
+Everything else, O5/O7/O8/O9 and O6/O10 through O14, is single-owner. The
+real cross-track dependency runs both directions at once: O5 (Junaid) calls
+into O6 (Arundhati) to dispatch every registered tool, and O7/O8 (Junaid)
+also go through O6's wrapper, so neither of you can finish your own scaffold
+half without the other's shape agreed in O2 first, even though the code
+itself is single-owner. That's exactly why O2 is a joint shared-contract
+item and not folded into either O1 or O3/O4. The other cross-track
+dependency is O16/O17 at the end.
 
 ---
 
@@ -171,10 +190,11 @@ O16/O17 at the end.
 1. **Day 1:** O15 shared contract (together, ~45 min); settle O1 (in-process
    vs. Redis) and O4 (NL-query approach) before any code, since both change
    the shape of what gets built.
-2. **Day 1-2:** Junaid O5-O6 (scaffold + envelope), Arundhati starts O10
-   against a stubbed envelope shape agreed in O2, swapping to the real one
-   once O6 merges.
-3. **Day 2-3:** Junaid O7-O8, Arundhati O11-O12.
+2. **Day 1-2:** Junaid O5 (scaffold), Arundhati O6 (dispatch + envelope), in
+   parallel against O2's agreed shape. O5 calls into a stub of O6 until it
+   merges; the reverse never happens, since O6 doesn't need O5 to exist to
+   be built or tested standalone.
+3. **Day 2-3:** Junaid O7-O8 (now against the real O6), Arundhati O10-O12.
 4. **Day 3-4:** Junaid O9 tests, Arundhati O13-O14.
 5. **Day 4:** O16 wiring (whoever is free first drafts, other reviews same
    day).
@@ -182,9 +202,11 @@ O16/O17 at the end.
    end-to-end protocol test).
 7. **Day 5:** O18 review and sign-off.
 
-Only hard dependency: Arundhati's tools need O2's envelope shape agreed (not
-built) before O10 starts, same pattern as every prior milestone's "interface
-agreed, implementation can lag" rule.
+Only hard dependency: both of you need O2's envelope shape agreed (not
+built) before O5 or O6 starts, same pattern as every prior milestone's
+"interface agreed, implementation can lag" rule. Unlike prior milestones,
+this dependency is mutual within the scaffold itself, not just "one track
+waits on the other's interface."
 
 ---
 
@@ -192,21 +214,24 @@ agreed, implementation can lag" rule.
 
 | | Junaid | Arundhati |
 |---|---|---|
-| Shared design authoring | O1 process shape + O2 tool envelope | O3 explain shape + O4 NL-query approach |
-| Large module | MCP server scaffold + dispatch envelope (O5, O6) | `query_decisions` point + aggregate cases (O11, O12) |
+| Shared design authoring | O1 process shape + O2 tool envelope shape | O3 explain shape + O4 NL-query approach |
+| Large module | MCP server scaffold: transport, registration, `main.ts` wiring (O5) | Dispatch + grounding envelope (O6), plus `query_decisions` point + aggregate cases (O11, O12) |
 | Medium module | `get_fleet_status` + `get_failover_history` (O7, O8) | `explain_routing_decision` (O10) |
 | Small module | (none) | grounding-constraint enforcement surface (O13) |
 | Tests | own module (O9) | own modules (O14) |
 | Joint | O15-O18, split evenly | same |
 
 Each side: half the shared contract authored, two tools each, own unit
-tests, half of every joint task. Junaid's side is weighted toward new
-protocol infrastructure (no prior milestone built anything like the MCP
-scaffold); Arundhati's side is weighted toward query sophistication (NL
-grounding, aggregate percentile computation), the more analytically involved
-half. Neither is strictly "the two easy tools vs. the two hard tools": O8
-(range-query normalization) and O5/O6 (protocol plumbing with no existing
-pattern to copy) carry real design weight of their own.
+tests, half of every joint task. The scaffold itself is now split down the
+middle instead of sitting entirely on one side: Junaid owns the transport
+shell (protocol plumbing with no existing pattern in this codebase to
+copy), Arundhati owns the semantics that flow through it (the grounding
+envelope, which her two analytical tools depend on more directly than
+Junaid's two lookup tools do, so ownership follows use). That leaves
+Arundhati with three items in the "large module" row instead of one, offset
+by O10 being comparatively lighter than O7/O8 (a single point lookup versus
+two independent tools) and O13 being a thin verification layer over work
+she's already doing in O6, not a new module in its own right.
 
 ---
 
