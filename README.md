@@ -14,10 +14,14 @@ An inference-aware load balancer for LLM serving fleets.
   (no waiting on the health poll loop), `POST /route` retries against the
   next-best replica, and every ejection/recovery lands in a queryable
   failover log.
+- **M4:** decision log. Every `POST /route` request records a `Decision`:
+  the full candidate set each strategy scored, the reason any replica was
+  excluded before scoring, and which replica the client actually got a
+  response from, across every retry round the request took.
 
-No decision log or MCP tools yet. `/route`'s `attempts` list explains one
-request's own retries, but there's no persisted, queryable "why did this
-routing decision happen" record across requests. That's M4.
+No MCP tools or dashboard yet. The decision log is queryable in-process
+(`DecisionLog.query`/`.get`), but there's no HTTP surface for it. That's M5a
+(`explain_routing_decision`, `query_decisions`).
 
 ---
 
@@ -234,6 +238,35 @@ load through a real kill and revive, asserting zero client-visible failures,
 sub-1s failover detection (measured from the failover log's own timestamps),
 and hysteresis-gated recovery, matching the PRD's failover success metrics.
 
+## Decision log
+
+Every `POST /route` request writes one `Decision`, whether it succeeds,
+retries, or fails outright:
+
+- `rounds`: one entry per engine call the request made. Each round carries
+  the full `candidates` set the active strategy scored (real score inputs,
+  not just the winner), the `excluded` replicas with a reason
+  (`unhealthy` or `already_tried`), and, if that round's pick didn't
+  resolve the request, a `failureReason`.
+- `chosenReplicaId`: the replica whose response the client actually got
+  back, or `null` for any failure, even a non-retryable `502` where a
+  replica was picked but never returned a usable response.
+
+This is not the M3 failover log (that's the ejection/recovery timeline); a
+`Decision` is per-request routing rationale, the substrate a future M5a MCP
+tool (`explain_routing_decision`, `query_decisions`) will read over HTTP.
+For now it's queryable only in-process, via `DecisionLog.query({ from?, to?
+})` and `.get(requestId)`.
+
+One nuance worth knowing if you go looking for it: a replica this same
+request already tried in an earlier retry round is always excluded with
+`reason: "unhealthy"` in practice, never `"already_tried"`. The retry loop
+ejects a failed replica (marking it `unhealthy`) before excluding it for the
+next round, so by the time the exclusion check runs, `unhealthy` already
+applies. `already_tried` is real and reachable at the engine level, just not
+observable through this particular caller. See
+`docs/architecture/m4.md` §3 for the full trace.
+
 ## Running the fleet standalone
 
 To run just the simulated replicas without the rest of the system (e.g. for
@@ -263,13 +296,21 @@ Runs unit tests for every module plus three integration tests, no mocks:
   on the failover log directly) and drives continuous `POST /route` load
   through a real kill/revive, asserting zero client-visible failures, sub-1s
   detection via request-driven ejection, and hysteresis-gated recovery.
+- `test/integration/m4.test.ts` (also in-process, to assert on the decision
+  log directly) drives sequential `POST /route` requests under round-robin,
+  kills a replica mid-run, and asserts the recorded decisions against what
+  actually happened: one `Decision` per request, `chosenReplicaId` matching
+  the client's real response, a full scored candidate set per round, and
+  the retried request's two rounds both captured with the right exclusion
+  reason and failure detail.
 
 ## Project structure
 
 ```
 src/
   adapter/    interface + HTTP implementation for talking to replicas
-  api/        GET /status and POST /route server (retry loop added M3)
+  api/        GET /status and POST /route server (retry loop added M3, decision recording added M4)
+  decisions/  decision log (per-request routing rationale, queryable by time or request id, M4)
   events/     failover event log (ejections + recoveries, queryable by time)
   health/     health scheduler (hysteresis-based health state machine + eject)
   registry/   in-memory fleet state store (+ Redis stub for later)
