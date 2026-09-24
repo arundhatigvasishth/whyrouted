@@ -12,11 +12,18 @@
  *     `maxRetries` times. Shape fixed by
  *     docs/milestones/m3/shared-contract.md, "L4: POST /route retry behaviour".
  *
- * `/route` is mounted only when an engine, an adapter, a scheduler, and a
- * failover log are all supplied, so the M1 status-only server still stands on
- * its own. Reads go through the `RegistryStore` interface and replica calls
- * through `ReplicaAdapter`, so neither the backing store nor the transport is
- * visible here.
+ * `/route` is mounted only when an engine, an adapter, a scheduler, a
+ * failover log, and a decision log are all supplied, so the M1 status-only
+ * server still stands on its own. Reads go through the `RegistryStore`
+ * interface and replica calls through `ReplicaAdapter`, so neither the
+ * backing store nor the transport is visible here.
+ *
+ * The decision log (M4, N11) is additive on top of the M3 retry loop: it
+ * accumulates one `DecisionRound` per engine call, parallel to the existing
+ * `attempts` accumulator, and records exactly one `Decision` when the request
+ * resolves. See docs/milestones/m4/shared-contract.md, N4, for the full
+ * agreement, including why `chosenReplicaId` is null on a non-retryable
+ * failure even though a replica was picked.
  */
 
 import express, { type Express, type ErrorRequestHandler, type Response } from "express";
@@ -29,8 +36,9 @@ import {
   type ReplicaAdapter,
   type ReplicaErrorKind,
 } from "../adapter/types.js";
-import type { RoutingEngine } from "../routing/engine.js";
+import type { RoutingEngine, RouteResult } from "../routing/engine.js";
 import type { FailoverLog } from "../events/types.js";
+import type { DecisionLog, DecisionRound } from "../decisions/types.js";
 
 /** Narrow slice of `HealthScheduler` the retry loop needs (M3, L11). */
 export type EjectingScheduler = { eject(replicaId: string, reason: string): void };
@@ -53,6 +61,8 @@ export interface ApiServerDeps {
   scheduler?: EjectingScheduler;
   /** Records the failover event a retryable failure causes (M3, L11). Required together with the other `/route` deps. */
   failoverLog?: Pick<FailoverLog, "record">;
+  /** Records the routing decision every request resolves to (M4, N11). Required together with the other `/route` deps. */
+  decisionLog?: Pick<DecisionLog, "record">;
   /** Retries allowed against the next-best replica before giving up. Defaults to `0` (M2 behaviour, no retry). */
   maxRetries?: number;
 }
@@ -84,11 +94,11 @@ const badJsonBody: ErrorRequestHandler = (err, _req, res, next) => {
  * tests can drive it without binding a port.
  */
 export function createStatusApp(deps: ApiServerDeps): Express {
-  const { store, engine, adapter, scheduler, failoverLog, maxRetries = 0 } = deps;
-  const routeDeps = [engine, adapter, scheduler, failoverLog];
+  const { store, engine, adapter, scheduler, failoverLog, decisionLog, maxRetries = 0 } = deps;
+  const routeDeps = [engine, adapter, scheduler, failoverLog, decisionLog];
   if (routeDeps.some((d) => d !== undefined) && routeDeps.some((d) => d === undefined)) {
     throw new Error(
-      "createStatusApp needs an engine, an adapter, a scheduler, and a failoverLog together to serve /route, or none of them",
+      "createStatusApp needs an engine, an adapter, a scheduler, a failoverLog, and a decisionLog together to serve /route, or none of them",
     );
   }
 
@@ -105,11 +115,12 @@ export function createStatusApp(deps: ApiServerDeps): Express {
     engine !== undefined &&
     adapter !== undefined &&
     scheduler !== undefined &&
-    failoverLog !== undefined
+    failoverLog !== undefined &&
+    decisionLog !== undefined
   ) {
     app.post("/route", express.json(), (req, res) => {
       void handleRoute(
-        { engine, adapter, scheduler, failoverLog, maxRetries },
+        { engine, adapter, scheduler, failoverLog, decisionLog, maxRetries },
         (req.body as { payload?: unknown }).payload,
         res,
       );
@@ -127,7 +138,27 @@ interface RouteHandlerDeps {
   adapter: ReplicaAdapter;
   scheduler: EjectingScheduler;
   failoverLog: Pick<FailoverLog, "record">;
+  decisionLog: Pick<DecisionLog, "record">;
   maxRetries: number;
+}
+
+/** Build the round this engine outcome contributes to the request's Decision (M4, N4). */
+function roundFor(decision: RouteResult): DecisionRound {
+  if (!decision.ok) {
+    return {
+      candidates: decision.candidates,
+      excluded: decision.excluded,
+      strategy: decision.strategy,
+      outcome: decision.error,
+    };
+  }
+  return {
+    candidates: decision.candidates,
+    excluded: decision.excluded,
+    strategy: decision.strategy,
+    outcome: "picked",
+    pickedReplicaId: decision.replicaId,
+  };
 }
 
 /**
@@ -137,16 +168,35 @@ interface RouteHandlerDeps {
  * try again, up to `maxRetries` retries (`maxRetries + 1` attempts total). A
  * non-retryable error stops immediately without ejecting; `maxRetries`
  * retries used up returns `503 all_replicas_failed` with the attempt list.
+ *
+ * M4, N11 additive: each iteration also appends one `DecisionRound` to
+ * `rounds`, and exactly once, when the request resolves, records the whole
+ * `Decision`. `chosenReplicaId` is set only on a `200`; every failure path,
+ * including a non-retryable `502` where a replica was picked but never
+ * returned a usable response, records `null` (docs/milestones/m4/shared-contract.md, N4).
  */
 async function handleRoute(deps: RouteHandlerDeps, payload: unknown, res: Response): Promise<void> {
-  const { engine, adapter, scheduler, failoverLog, maxRetries } = deps;
+  const { engine, adapter, scheduler, failoverLog, decisionLog, maxRetries } = deps;
   const requestId = crypto.randomUUID();
   const attempts: RouteAttempt[] = [];
   const exclude: string[] = [];
+  const rounds: DecisionRound[] = [];
+
+  const recordDecision = (chosenReplicaId: string | null): void => {
+    decisionLog.record({
+      id: crypto.randomUUID(),
+      requestId,
+      at: new Date().toISOString(),
+      rounds,
+      chosenReplicaId,
+    });
+  };
 
   for (;;) {
     const decision = engine.route({ exclude });
     if (!decision.ok) {
+      rounds.push(roundFor(decision));
+      recordDecision(null);
       if (attempts.length === 0) {
         // no_healthy_replicas and no_routable_replica pass straight through on
         // a first attempt, so the caller can tell "fleet is down" from
@@ -160,6 +210,8 @@ async function handleRoute(deps: RouteHandlerDeps, payload: unknown, res: Respon
 
     try {
       const { response, latencyMs } = await adapter.sendRequest(decision.replicaId, payload);
+      rounds.push(roundFor(decision));
+      recordDecision(decision.replicaId);
       res.json({
         replicaId: decision.replicaId,
         strategy: decision.strategy,
@@ -182,9 +234,14 @@ async function handleRoute(deps: RouteHandlerDeps, payload: unknown, res: Respon
           requestId,
         });
         attempts.push({ replicaId: decision.replicaId, kind: err.kind, status: err.status });
+        rounds.push({
+          ...roundFor(decision),
+          failureReason: { kind: err.kind, status: err.status },
+        });
         exclude.push(decision.replicaId);
 
         if (attempts.length > maxRetries) {
+          recordDecision(null);
           res.status(503).json({ error: "all_replicas_failed", attempts });
           return;
         }
@@ -193,6 +250,12 @@ async function handleRoute(deps: RouteHandlerDeps, payload: unknown, res: Respon
 
       // Non-retryable (a 4xx `ReplicaRequestError`, or any other error): stop.
       // The replica is not at fault for a 4xx, so it is not ejected.
+      rounds.push({
+        ...roundFor(decision),
+        failureReason:
+          err instanceof ReplicaRequestError ? { kind: err.kind, status: err.status } : undefined,
+      });
+      recordDecision(null);
       res.status(502).json({
         error: "replica_request_failed",
         replicaId: decision.replicaId,

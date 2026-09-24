@@ -4,8 +4,8 @@
  * Wires the tracks together: load config, start the simulated fleet, wait for
  * it to come up, register every replica in the registry, start the health
  * scheduler polling through the HTTP adapter, build the routing engine over
- * the registry and the live routing config, and expose `GET /status` and
- * `POST /route`.
+ * the registry and the live routing config, construct the failover and
+ * decision logs, and expose `GET /status` and `POST /route`.
  *
  * Everything below depends on the shared contracts (`src/adapter/types.ts`,
  * `src/types.ts`, `src/routing/*`) only, swapping the registry backend or the
@@ -21,6 +21,7 @@ import { createRoutingConfig } from "./routing/config.js";
 import { createRoutingEngine } from "./routing/engine.js";
 import { startStatusServer, type RunningStatusServer } from "./api/server.js";
 import { createFailoverLog } from "./events/failover-log.js";
+import { createDecisionLog } from "./decisions/decision-log.js";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -66,6 +67,7 @@ async function main(): Promise<void> {
     unhealthyThreshold: config.unhealthyThreshold,
     healthyThreshold: config.healthyThreshold,
   });
+  const decisionLog = createDecisionLog();
 
   const scheduler = new HealthScheduler({
     adapter,
@@ -93,6 +95,7 @@ async function main(): Promise<void> {
     adapter,
     scheduler,
     failoverLog,
+    decisionLog,
     maxRetries: config.maxRetries,
     port: config.statusPort,
     host: config.host,

@@ -14,6 +14,7 @@ import {
   type SendResult,
 } from "../src/adapter/types.js";
 import type { FailoverEvent, FailoverLog } from "../src/events/types.js";
+import type { Decision, DecisionLog } from "../src/decisions/types.js";
 
 let running: RunningStatusServer | undefined;
 
@@ -21,6 +22,19 @@ afterEach(async () => {
   await running?.close();
   running = undefined;
 });
+
+/** A successful RouteResult literal, with M4's candidates/excluded defaulted to `[]`. */
+function ok(replicaId: string, strategy: string): RouteResult {
+  return { ok: true, replicaId, strategy, candidates: [], excluded: [] };
+}
+
+/** A failed RouteResult literal, with M4's candidates/excluded defaulted to `[]`. */
+function fail(
+  error: "no_healthy_replicas" | "no_routable_replica",
+  strategy = "least-loaded",
+): RouteResult {
+  return { ok: false, error, strategy, candidates: [], excluded: [] };
+}
 
 /** Engine stub whose `route` is driven by a queue of results, one per call. */
 function fakeEngine(
@@ -84,11 +98,22 @@ function fakeFailoverLog(): Pick<FailoverLog, "record"> & { events: FailoverEven
   };
 }
 
+function fakeDecisionLog(): Pick<DecisionLog, "record"> & { decisions: Decision[] } {
+  const decisions: Decision[] = [];
+  return {
+    decisions,
+    record: (decision) => {
+      decisions.push(decision);
+    },
+  };
+}
+
 async function start(opts: {
   engine?: RoutingEngine;
   adapter?: ReplicaAdapter;
   scheduler?: EjectingScheduler;
   failoverLog?: Pick<FailoverLog, "record">;
+  decisionLog?: Pick<DecisionLog, "record">;
   maxRetries?: number;
   store?: Registry;
 }): Promise<RunningStatusServer> {
@@ -98,6 +123,7 @@ async function start(opts: {
     adapter: opts.adapter,
     scheduler: opts.scheduler,
     failoverLog: opts.failoverLog,
+    decisionLog: opts.decisionLog,
     maxRetries: opts.maxRetries,
     port: 0,
   });
@@ -117,11 +143,13 @@ describe("POST /route", () => {
     const adapter = fakeAdapter([
       () => Promise.resolve({ response: { tokens: 3 }, latencyMs: 14 }),
     ]);
+    const decisionLog = fakeDecisionLog();
     const server = await start({
-      engine: fakeEngine([{ ok: true, replicaId: "replica-2", strategy: "least-loaded" }]),
+      engine: fakeEngine([ok("replica-2", "least-loaded")]),
       adapter,
       scheduler: fakeScheduler(),
       failoverLog: fakeFailoverLog(),
+      decisionLog,
     });
 
     const res = await postRoute(server.url, { payload: { prompt: "hi" } });
@@ -134,15 +162,29 @@ describe("POST /route", () => {
       attempts: [],
     });
     expect(adapter.calls).toEqual([{ replicaId: "replica-2", payload: { prompt: "hi" } }]);
+
+    expect(decisionLog.decisions).toHaveLength(1);
+    const [decision] = decisionLog.decisions;
+    expect(decision).toMatchObject({ chosenReplicaId: "replica-2" });
+    expect(decision!.rounds).toEqual([
+      {
+        candidates: [],
+        excluded: [],
+        strategy: "least-loaded",
+        outcome: "picked",
+        pickedReplicaId: "replica-2",
+      },
+    ]);
   });
 
   it("forwards an undefined payload when the body has none", async () => {
     const adapter = fakeAdapter([() => Promise.resolve({ response: null, latencyMs: 1 })]);
     const server = await start({
-      engine: fakeEngine([{ ok: true, replicaId: "replica-1", strategy: "round-robin" }]),
+      engine: fakeEngine([ok("replica-1", "round-robin")]),
       adapter,
       scheduler: fakeScheduler(),
       failoverLog: fakeFailoverLog(),
+      decisionLog: fakeDecisionLog(),
     });
 
     const res = await postRoute(server.url, {});
@@ -152,25 +194,34 @@ describe("POST /route", () => {
 
   it("returns 503 no_healthy_replicas on the first attempt when the fleet is down", async () => {
     const adapter = fakeAdapter([() => Promise.reject(new Error("should not be called"))]);
+    const decisionLog = fakeDecisionLog();
     const server = await start({
-      engine: fakeEngine([{ ok: false, error: "no_healthy_replicas" }]),
+      engine: fakeEngine([fail("no_healthy_replicas")]),
       adapter,
       scheduler: fakeScheduler(),
       failoverLog: fakeFailoverLog(),
+      decisionLog,
     });
 
     const res = await postRoute(server.url, { payload: {} });
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ error: "no_healthy_replicas" });
     expect(adapter.calls).toEqual([]);
+
+    expect(decisionLog.decisions).toHaveLength(1);
+    expect(decisionLog.decisions[0]).toMatchObject({
+      chosenReplicaId: null,
+      rounds: [{ outcome: "no_healthy_replicas", candidates: [], excluded: [] }],
+    });
   });
 
   it("returns 503 no_routable_replica as a distinct body", async () => {
     const server = await start({
-      engine: fakeEngine([{ ok: false, error: "no_routable_replica" }]),
+      engine: fakeEngine([fail("no_routable_replica")]),
       adapter: fakeAdapter([() => Promise.reject(new Error("should not be called"))]),
       scheduler: fakeScheduler(),
       failoverLog: fakeFailoverLog(),
+      decisionLog: fakeDecisionLog(),
     });
 
     const res = await postRoute(server.url, { payload: {} });
@@ -183,13 +234,18 @@ describe("POST /route", () => {
       () => Promise.reject(new ReplicaRequestError("timeout", 'replica "replica-1" timed out')),
       () => Promise.resolve({ response: { ok: true }, latencyMs: 5 }),
     ]);
-    const engine = fakeEngine([
-      { ok: true, replicaId: "replica-1", strategy: "least-loaded" },
-      { ok: true, replicaId: "replica-2", strategy: "least-loaded" },
-    ]);
+    const engine = fakeEngine([ok("replica-1", "least-loaded"), ok("replica-2", "least-loaded")]);
     const scheduler = fakeScheduler();
     const failoverLog = fakeFailoverLog();
-    const server = await start({ engine, adapter, scheduler, failoverLog, maxRetries: 2 });
+    const decisionLog = fakeDecisionLog();
+    const server = await start({
+      engine,
+      adapter,
+      scheduler,
+      failoverLog,
+      decisionLog,
+      maxRetries: 2,
+    });
 
     const res = await postRoute(server.url, { payload: {} });
     expect(res.status).toBe(200);
@@ -212,6 +268,24 @@ describe("POST /route", () => {
       reason: "request failed: timeout",
     });
     expect(engine.calls).toEqual([{ exclude: [] }, { exclude: ["replica-1"] }]);
+
+    // The decision keeps both rounds and the failure reason the HTTP
+    // response's `attempts` list would otherwise be the only record of
+    // (M4, N4/N11).
+    expect(decisionLog.decisions).toHaveLength(1);
+    expect(decisionLog.decisions[0]).toMatchObject({
+      chosenReplicaId: "replica-2",
+      rounds: [
+        {
+          strategy: "least-loaded",
+          outcome: "picked",
+          pickedReplicaId: "replica-1",
+          failureReason: { kind: "timeout" },
+        },
+        { strategy: "least-loaded", outcome: "picked", pickedReplicaId: "replica-2" },
+      ],
+    });
+    expect(decisionLog.decisions[0]!.rounds[1]).not.toHaveProperty("failureReason");
   });
 
   it("returns 503 all_replicas_failed with the full attempt list once maxRetries is exhausted", async () => {
@@ -221,13 +295,21 @@ describe("POST /route", () => {
       () => Promise.reject(new ReplicaRequestError("timeout", "replica-3 timed out")),
     ]);
     const engine = fakeEngine([
-      { ok: true, replicaId: "replica-1", strategy: "round-robin" },
-      { ok: true, replicaId: "replica-2", strategy: "round-robin" },
-      { ok: true, replicaId: "replica-3", strategy: "round-robin" },
+      ok("replica-1", "round-robin"),
+      ok("replica-2", "round-robin"),
+      ok("replica-3", "round-robin"),
     ]);
     const scheduler = fakeScheduler();
     const failoverLog = fakeFailoverLog();
-    const server = await start({ engine, adapter, scheduler, failoverLog, maxRetries: 2 });
+    const decisionLog = fakeDecisionLog();
+    const server = await start({
+      engine,
+      adapter,
+      scheduler,
+      failoverLog,
+      decisionLog,
+      maxRetries: 2,
+    });
 
     const res = await postRoute(server.url, { payload: {} });
     expect(res.status).toBe(503);
@@ -241,6 +323,16 @@ describe("POST /route", () => {
     });
     expect(scheduler.ejected).toHaveLength(3);
     expect(failoverLog.events).toHaveLength(3);
+
+    expect(decisionLog.decisions).toHaveLength(1);
+    const [decision] = decisionLog.decisions;
+    expect(decision!.chosenReplicaId).toBeNull();
+    expect(decision!.rounds).toHaveLength(3);
+    expect(decision!.rounds.map((r) => r.failureReason)).toEqual([
+      { kind: "connection" },
+      { kind: "http_status", status: 503 },
+      { kind: "timeout" },
+    ]);
   });
 
   it("stops without retrying or ejecting on a non-retryable 4xx error", async () => {
@@ -249,11 +341,13 @@ describe("POST /route", () => {
     ]);
     const scheduler = fakeScheduler();
     const failoverLog = fakeFailoverLog();
+    const decisionLog = fakeDecisionLog();
     const server = await start({
-      engine: fakeEngine([{ ok: true, replicaId: "replica-1", strategy: "least-loaded" }]),
+      engine: fakeEngine([ok("replica-1", "least-loaded")]),
       adapter,
       scheduler,
       failoverLog,
+      decisionLog,
       maxRetries: 2,
     });
 
@@ -268,14 +362,30 @@ describe("POST /route", () => {
     expect(scheduler.ejected).toEqual([]);
     expect(failoverLog.events).toEqual([]);
     expect(adapter.calls).toHaveLength(1);
+
+    // A replica was picked but the client never got a usable response from
+    // it, so chosenReplicaId is null even though the round records the pick
+    // (M4, N4).
+    expect(decisionLog.decisions).toHaveLength(1);
+    expect(decisionLog.decisions[0]).toMatchObject({
+      chosenReplicaId: null,
+      rounds: [
+        {
+          outcome: "picked",
+          pickedReplicaId: "replica-1",
+          failureReason: { kind: "http_status", status: 400 },
+        },
+      ],
+    });
   });
 
   it("returns 400 on a malformed JSON body", async () => {
     const server = await start({
-      engine: fakeEngine([{ ok: true, replicaId: "replica-1", strategy: "round-robin" }]),
+      engine: fakeEngine([ok("replica-1", "round-robin")]),
       adapter: fakeAdapter([() => Promise.resolve({ response: null, latencyMs: 1 })]),
       scheduler: fakeScheduler(),
       failoverLog: fakeFailoverLog(),
+      decisionLog: fakeDecisionLog(),
     });
 
     const res = await postRoute(server.url, "{ not json", true);
@@ -285,10 +395,11 @@ describe("POST /route", () => {
 
   it("still serves GET /status alongside /route", async () => {
     const server = await start({
-      engine: fakeEngine([{ ok: false, error: "no_healthy_replicas" }]),
+      engine: fakeEngine([fail("no_healthy_replicas")]),
       adapter: fakeAdapter([() => Promise.resolve({ response: null, latencyMs: 1 })]),
       scheduler: fakeScheduler(),
       failoverLog: fakeFailoverLog(),
+      decisionLog: fakeDecisionLog(),
     });
 
     const res = await fetch(`${server.url}/status`);
@@ -308,8 +419,8 @@ describe("createStatusApp wiring", () => {
     expect(() =>
       createStatusApp({
         store: new Registry(),
-        engine: fakeEngine([{ ok: false, error: "no_healthy_replicas" }]),
+        engine: fakeEngine([fail("no_healthy_replicas")]),
       }),
-    ).toThrow(/engine, an adapter, a scheduler, and a failoverLog/);
+    ).toThrow(/engine, an adapter, a scheduler, a failoverLog, and a decisionLog/);
   });
 });

@@ -1,10 +1,13 @@
 /**
- * Routing engine (K2 contract + K9 implementation, M2).
+ * Routing engine (K2 contract + K9 implementation, M2; candidate capture
+ * added M4, N9).
  *
- * See docs/milestones/m2/shared-contract.md for the full agreement. The
- * interface region below (RouteResult, RoutingEngineDeps, RoutingEngine) is the
- * signed-off contract and does not change without a PR that also updates that
- * doc. `createRoutingEngine` at the bottom is the K9 implementation.
+ * See docs/milestones/m2/shared-contract.md for the full M2 agreement and
+ * docs/milestones/m4/shared-contract.md (N1, N3, N4) for the M4 additions.
+ * The interface region below (RouteResult, RoutingEngineDeps, RoutingEngine)
+ * is the signed-off contract and does not change without a PR that also
+ * updates those docs. `createRoutingEngine` at the bottom is the
+ * implementation.
  *
  * The engine is the one piece that touches both tracks: it reads a fresh
  * registry snapshot on every `route()` call (no caching), filters to
@@ -13,14 +16,33 @@
  * changes, per the lifecycle rule in types.ts.
  */
 
+import type { ReplicaState } from "../types.js";
 import type { RegistryStore } from "../registry/types.js";
-import type { RoutingConfig, RoutingStrategy, StrategyName } from "./types.js";
+import type {
+  CandidateScore,
+  ExcludedCandidate,
+  RoutingConfig,
+  RoutingStrategy,
+  StrategyName,
+} from "./types.js";
 import { createStrategy } from "./strategies/index.js";
 
+/**
+ * Fields every `route()` outcome carries (M4, N4): what the round scored and
+ * excluded, and under which strategy. Present on `no_healthy_replicas` /
+ * `no_routable_replica` too, not just a successful pick, so a `DecisionRound`
+ * built from a failed round is never missing this data.
+ */
+interface RouteOutcomeCapture {
+  strategy: string;
+  candidates: CandidateScore[];
+  excluded: ExcludedCandidate[];
+}
+
 export type RouteResult =
-  | { ok: true; replicaId: string; strategy: string }
-  | { ok: false; error: "no_healthy_replicas" }
-  | { ok: false; error: "no_routable_replica" };
+  | ({ ok: true; replicaId: string } & RouteOutcomeCapture)
+  | ({ ok: false; error: "no_healthy_replicas" } & RouteOutcomeCapture)
+  | ({ ok: false; error: "no_routable_replica" } & RouteOutcomeCapture);
 
 /**
  * What the engine needs to be built, mirroring the M1 pattern of narrowing a
@@ -53,12 +75,16 @@ export interface RoutingEngine {
    *   every healthy candidate out. Distinct from `no_healthy_replicas`
    *   because it is not true that the fleet is down, K11's `POST /route`
    *   must not report the same 503 body for both.
+   *
+   * Every outcome, including both failure cases, also carries `strategy`,
+   * `candidates`, and `excluded` (M4, N4), so a caller building a decision
+   * record (M4, N11) never has to special-case a failed round.
    */
   route(opts?: RouteOptions): RouteResult;
 }
 
 /**
- * Build a routing engine (K9).
+ * Build a routing engine (K9; candidate capture added N9).
  *
  * Stateless per call except for one thing: it holds the current strategy
  * instance so a stateful strategy (round-robin's cursor) survives across
@@ -81,29 +107,65 @@ export function createRoutingEngine(deps: RoutingEngineDeps): RoutingEngine {
 
   return {
     route(opts?: RouteOptions): RouteResult {
-      const healthy = deps.registry
-        .getSnapshot()
-        .replicas.filter((replica) => replica.runtime.health === "healthy");
+      const snapshot = deps.registry.getSnapshot().replicas;
+      const healthy = snapshot.filter((replica) => replica.runtime.health === "healthy");
+
+      // N3: every replica not in `healthy` is excluded before anything is
+      // scored, and never reaches a strategy.
+      const excluded: ExcludedCandidate[] = snapshot
+        .filter((replica) => replica.runtime.health !== "healthy")
+        .map((replica) => ({ replicaId: replica.id, reason: "unhealthy" as const }));
+
       if (healthy.length === 0) {
-        return { ok: false, error: "no_healthy_replicas" };
+        // No strategy is looked up here at all (N4): `strategy` names the
+        // configured one, not one that scored anything this round.
+        return {
+          ok: false,
+          error: "no_healthy_replicas",
+          strategy: deps.config.getStrategyName(),
+          candidates: [],
+          excluded,
+        };
       }
 
       const exclude = opts?.exclude;
-      const candidates =
-        exclude === undefined || exclude.length === 0
-          ? healthy
-          : healthy.filter((replica) => !exclude.includes(replica.id));
-      if (candidates.length === 0) {
-        return { ok: false, error: "no_routable_replica" };
+      const pool: ReplicaState[] = [];
+      for (const replica of healthy) {
+        if (exclude !== undefined && exclude.includes(replica.id)) {
+          excluded.push({ replicaId: replica.id, reason: "already_tried" });
+        } else {
+          pool.push(replica);
+        }
       }
 
       const strategy = strategyFor(deps.config.getStrategyName());
-      const replicaId = strategy.pick(candidates, deps.config.getWeights());
-      if (replicaId === null) {
-        return { ok: false, error: "no_routable_replica" };
+      const weights = deps.config.getWeights();
+      // N4 step 3: score() runs on the pool even when it is empty, on the
+      // same snapshot pick() is about to use, no re-read in between.
+      const candidates = strategy.score(pool, weights);
+
+      if (pool.length === 0) {
+        return {
+          ok: false,
+          error: "no_routable_replica",
+          strategy: strategy.name,
+          candidates,
+          excluded,
+        };
       }
 
-      return { ok: true, replicaId, strategy: strategy.name };
+      const replicaId = strategy.pick(pool, weights);
+      if (replicaId === null) {
+        return {
+          ok: false,
+          error: "no_routable_replica",
+          strategy: strategy.name,
+          candidates,
+          excluded,
+        };
+      }
+
+      return { ok: true, replicaId, strategy: strategy.name, candidates, excluded };
     },
   };
 }

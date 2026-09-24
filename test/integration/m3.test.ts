@@ -35,6 +35,7 @@ import { createRoutingConfig } from "../../src/routing/config.js";
 import { createRoutingEngine } from "../../src/routing/engine.js";
 import { startStatusServer, type RunningStatusServer } from "../../src/api/server.js";
 import { createFailoverLog } from "../../src/events/failover-log.js";
+import { createDecisionLog } from "../../src/decisions/decision-log.js";
 
 const HOST = "127.0.0.1";
 const BASE_PORT = 8301;
@@ -83,6 +84,7 @@ describe("M3 end to end", () => {
       unhealthyThreshold: config.unhealthyThreshold,
       healthyThreshold: config.healthyThreshold,
     });
+    const decisionLog = createDecisionLog();
 
     scheduler = new HealthScheduler({
       adapter,
@@ -107,6 +109,7 @@ describe("M3 end to end", () => {
       adapter,
       scheduler,
       failoverLog,
+      decisionLog,
       maxRetries: config.maxRetries,
       port: config.statusPort,
       host: config.host,

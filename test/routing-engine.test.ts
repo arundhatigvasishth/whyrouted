@@ -60,7 +60,13 @@ function fakeConfig(
 describe("routing engine", () => {
   it("reports no_healthy_replicas when the registry is empty", () => {
     const engine = createRoutingEngine({ registry: fakeRegistry([]), config: fakeConfig() });
-    expect(engine.route()).toEqual({ ok: false, error: "no_healthy_replicas" });
+    expect(engine.route()).toEqual({
+      ok: false,
+      error: "no_healthy_replicas",
+      strategy: "round-robin",
+      candidates: [],
+      excluded: [],
+    });
   });
 
   it("reports no_healthy_replicas when every replica is unhealthy or unknown", () => {
@@ -68,7 +74,18 @@ describe("routing engine", () => {
       registry: fakeRegistry([replica("replica-1", "unhealthy"), replica("replica-2", "unknown")]),
       config: fakeConfig(),
     });
-    expect(engine.route()).toEqual({ ok: false, error: "no_healthy_replicas" });
+    // No strategy is looked up on this path (M4, N4): `strategy` names the
+    // configured strategy, not one that scored anything this round.
+    expect(engine.route()).toEqual({
+      ok: false,
+      error: "no_healthy_replicas",
+      strategy: "round-robin",
+      candidates: [],
+      excluded: [
+        { replicaId: "replica-1", reason: "unhealthy" },
+        { replicaId: "replica-2", reason: "unhealthy" },
+      ],
+    });
   });
 
   it("routes to a healthy replica and reports which strategy chose it", () => {
@@ -76,7 +93,15 @@ describe("routing engine", () => {
       registry: fakeRegistry([replica("replica-1", "healthy")]),
       config: fakeConfig("least-loaded"),
     });
-    expect(engine.route()).toEqual({ ok: true, replicaId: "replica-1", strategy: "least-loaded" });
+    expect(engine.route()).toEqual({
+      ok: true,
+      replicaId: "replica-1",
+      strategy: "least-loaded",
+      candidates: [
+        { replicaId: "replica-1", inFlight: 0, latencyMs: 10, score: 0, considered: true },
+      ],
+      excluded: [],
+    });
   });
 
   it("hands the strategy only the healthy replicas", () => {
@@ -89,7 +114,16 @@ describe("routing engine", () => {
       config: fakeConfig("least-loaded"),
     });
     // replica-1 has the lowest inFlight but is unhealthy, so it must not win.
-    expect(engine.route()).toEqual({ ok: true, replicaId: "replica-3", strategy: "least-loaded" });
+    expect(engine.route()).toEqual({
+      ok: true,
+      replicaId: "replica-3",
+      strategy: "least-loaded",
+      candidates: [
+        { replicaId: "replica-2", inFlight: 5, latencyMs: 10, score: 5, considered: true },
+        { replicaId: "replica-3", inFlight: 2, latencyMs: 10, score: 2, considered: true },
+      ],
+      excluded: [{ replicaId: "replica-1", reason: "unhealthy" }],
+    });
   });
 
   it("delegates to the round-robin strategy in registration order", () => {
@@ -140,7 +174,16 @@ describe("routing engine", () => {
     expect(engine.route()).toMatchObject({ replicaId: "replica-1", strategy: "round-robin" });
 
     config.setStrategyName("least-loaded");
-    expect(engine.route()).toEqual({ ok: true, replicaId: "replica-2", strategy: "least-loaded" });
+    expect(engine.route()).toEqual({
+      ok: true,
+      replicaId: "replica-2",
+      strategy: "least-loaded",
+      candidates: [
+        { replicaId: "replica-1", inFlight: 9, latencyMs: 10, score: 9, considered: true },
+        { replicaId: "replica-2", inFlight: 1, latencyMs: 10, score: 1, considered: true },
+      ],
+      excluded: [],
+    });
   });
 
   it("reads scoring weights fresh on every call", () => {
@@ -167,7 +210,13 @@ describe("routing engine", () => {
       ]),
       config: fakeConfig("latency-weighted"),
     });
-    expect(engine.route()).toEqual({ ok: false, error: "no_routable_replica" });
+    expect(engine.route()).toEqual({
+      ok: false,
+      error: "no_routable_replica",
+      strategy: "latency-weighted",
+      candidates: [],
+      excluded: [],
+    });
   });
 
   describe("candidate exclusion (M3, L10)", () => {
@@ -184,6 +233,10 @@ describe("routing engine", () => {
         ok: true,
         replicaId: "replica-2",
         strategy: "least-loaded",
+        candidates: [
+          { replicaId: "replica-2", inFlight: 5, latencyMs: 10, score: 5, considered: true },
+        ],
+        excluded: [{ replicaId: "replica-1", reason: "already_tried" }],
       });
     });
 
@@ -195,6 +248,9 @@ describe("routing engine", () => {
       expect(engine.route({ exclude: ["replica-1"] })).toEqual({
         ok: false,
         error: "no_routable_replica",
+        strategy: "least-loaded",
+        candidates: [],
+        excluded: [{ replicaId: "replica-1", reason: "already_tried" }],
       });
     });
 
@@ -206,6 +262,30 @@ describe("routing engine", () => {
       expect(engine.route({ exclude: ["replica-2"] })).toEqual({
         ok: false,
         error: "no_healthy_replicas",
+        strategy: "least-loaded",
+        candidates: [],
+        excluded: [{ replicaId: "replica-1", reason: "unhealthy" }],
+      });
+    });
+
+    it("reports a replica as unhealthy, not already_tried, when it is both", () => {
+      const engine = createRoutingEngine({
+        registry: fakeRegistry([
+          replica("replica-1", "unhealthy"),
+          replica("replica-2", "healthy"),
+        ]),
+        config: fakeConfig("least-loaded"),
+      });
+      // replica-1 is unhealthy AND in the exclude set (ejected mid-retry
+      // after an earlier round already tried it); unhealthy wins (N3).
+      expect(engine.route({ exclude: ["replica-1"] })).toEqual({
+        ok: true,
+        replicaId: "replica-2",
+        strategy: "least-loaded",
+        candidates: [
+          { replicaId: "replica-2", inFlight: 0, latencyMs: 10, score: 0, considered: true },
+        ],
+        excluded: [{ replicaId: "replica-1", reason: "unhealthy" }],
       });
     });
 
@@ -218,6 +298,10 @@ describe("routing engine", () => {
         ok: true,
         replicaId: "replica-1",
         strategy: "least-loaded",
+        candidates: [
+          { replicaId: "replica-1", inFlight: 0, latencyMs: 10, score: 0, considered: true },
+        ],
+        excluded: [],
       });
     });
 
@@ -230,6 +314,10 @@ describe("routing engine", () => {
         ok: true,
         replicaId: "replica-1",
         strategy: "least-loaded",
+        candidates: [
+          { replicaId: "replica-1", inFlight: 0, latencyMs: 10, score: 0, considered: true },
+        ],
+        excluded: [],
       });
     });
   });
