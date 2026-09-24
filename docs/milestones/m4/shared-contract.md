@@ -3,10 +3,10 @@
 **Status:** N1 and N3 drafted by Junaid (2026-09-23), covering the scoring
 side. N2 and N4 drafted by Arundhati (2026-09-23), covering the decision
 record and the recording point, adjusted to the file paths N1/N3 corrected
-(see below). Neither side has reviewed the other's half yet; one open tension
-between N1 and N3 is flagged inline rather than silently resolved. Both
-review the whole doc, and settle the flagged tension, before either track
-starts building against it.
+(see below). Junaid reviewed N2/N4 the same day: resolved Arundhati's
+N1/N3 gap, settled the `no_healthy_replicas` round's `strategy` field, and
+raised one new gap (`DecisionRound.failureReason?`, in N4) that still needs
+Arundhati's sign-off before N10/N11 build against it.
 **Covers:** the candidate score shape and `score()` method (N1), the decision
 record shape (N2), the exclusion-reason taxonomy (N3), and the `POST /route`
 decision-recording point (N4).
@@ -101,6 +101,13 @@ export interface RoutingStrategy {
   internal scoring choices, which is exactly the coupling the M3 freeze and
   N3's own "engine owns exclusion, strategy owns scoring" boundary are trying
   to avoid. But this is a joint call, not landing until we agree.
+
+  **Junaid's call (2026-09-23):** agreed, going with (1). N3's invariant below
+  is narrowed accordingly. N16 asserts full `candidates` + `excluded` coverage
+  only under least-loaded and round-robin (neither of which ever declines a
+  healthy candidate); it does not assert it for latency-weighted, and a
+  separate latency-weighted-specific test (N8) documents the null-latency
+  omission directly instead.
 
 **Round-robin's stand-in representation (N6 will implement, agreed here):**
 round-robin has no load- or latency-based score. Its `score` is the
@@ -239,6 +246,14 @@ export interface ExcludedCandidate {
   reason so the invariant stays literally true. Not resolving this silently
   either way.
 
+  **Junaid's call (2026-09-23):** narrowed. The invariant is: every replica
+  the *engine* excludes (unhealthy, or already tried) appears in `excluded`.
+  A candidate a strategy itself declines to score (latency-weighted's
+  null-latency case, pre-existing since M2) is not covered by this invariant
+  and is not an `ExcludedCandidate`; it is simply absent from the round,
+  which is documented strategy behaviour, not an engine bug. See N1's
+  resolution above.
+
 ---
 
 ## N4: `POST /route` decision-recording point (`src/routing/engine.ts`, `src/api/server.ts`)
@@ -257,7 +272,17 @@ returns:**
   strategy: string;
 }
 ```
-alongside the existing `RouteResult`. The filtering that produces this is:
+alongside the existing `RouteResult`. `strategy` is `deps.config.getStrategyName()`
+read directly, not the name of a strategy instance that was actually invoked:
+on `no_healthy_replicas`, the engine returns before it would otherwise build
+or look up a strategy at all (see `engine.ts`'s current early return), so
+`strategy` there names the configured strategy, not one that scored anything
+this round. **Junaid's flag (2026-09-23):** the original draft didn't say
+where `strategy` comes from in that case; settled here so N9 doesn't have to
+guess, and so a `no_healthy_replicas` round's `strategy` field isn't read as
+"this strategy tried and failed."
+
+The filtering that produces this is:
 1. Replicas in the full registry snapshot not in `healthy` -> `excluded` with
    `reason: "unhealthy"`. Never passed to `score()` or `pick()`.
 2. Of the remaining (`healthy`), any in `opts.exclude` -> `excluded` with
@@ -297,6 +322,22 @@ alongside the existing `RouteResult`. The filtering that produces this is:
    top level answers "did this succeed, and if so where," nothing finer.
 4. `requestId` and `at` reuse the same values the retry loop and response
    body already use; no new id generation.
+
+**Junaid's flag (2026-09-23), real gap:** `DecisionRound` (N2) has no field
+for *why* a round with `outcome: "picked"` didn't end up being the answer,
+that is, the `ReplicaRequestError.kind`/`status` that caused the retry loop
+to move on. That detail only exists in the HTTP response's `attempts` list,
+which is never persisted. So `explain_routing_decision(requestId)`, reading
+`DecisionLog` alone months later, will see a multi-round `Decision` with two
+`picked` rounds and can tell *which* replicas were tried and in what order,
+but not *why* the first one didn't work, which undercuts N2's own stated
+goal of showing "the whole retry story." Proposing: `DecisionRound` grows an
+optional `failureReason?: { kind: ReplicaErrorKind; status?: number }`,
+mirroring `RouteAttempt` minus `replicaId` (redundant with
+`pickedReplicaId`), set by the API layer in the same place it already builds
+`attempts` entries, absent on the round that actually resolved the request.
+Small addition, no interface reshuffle, but it changes N2's shape, so it
+needs sign-off from both before N10/N11 build against it.
 
 ---
 
@@ -366,16 +407,21 @@ is also settled, since that gap touches the same interface.
 - [x] N4 engine outcome/filtering rules and the API layer's recording point,
       including the `chosenReplicaId` null-on-non-retryable-failure rule
       (Arundhati, drafted 2026-09-23, pending Junaid review).
-- [ ] **The N1/N3 gap:** decide whether a strategy-declined candidate (only
-      latency-weighted, currently) breaks the "every replica appears
-      somewhere" invariant or narrows it. Arundhati's preference stated
-      above; needs Junaid's call before N9 is built.
-- [ ] N1/N2 cross-check: `DecisionRound.candidates` type-checks against
-      whatever `score()` actually returns (both).
-- [ ] N3/N4 cross-check: the `unhealthy` / `already_tried` filtering order in
-      N4 matches N3's taxonomy exactly (both).
-- [ ] `chosenReplicaId` semantics on a non-retryable `502` (null, not the
-      picked-but-failed replica id) agreed by both.
+- [x] **The N1/N3 gap:** resolved (Junaid, 2026-09-23). Narrowed to
+      engine-level exclusions only; latency-weighted's null-latency omission
+      is documented strategy behaviour, not an invariant violation.
+- [x] N1/N2 cross-check: `DecisionRound.candidates` type-checks against
+      whatever `score()` actually returns (both, 2026-09-23).
+- [x] N3/N4 cross-check: the `unhealthy` / `already_tried` filtering order in
+      N4 matches N3's taxonomy exactly (both, 2026-09-23).
+- [x] `chosenReplicaId` semantics on a non-retryable `502` (null, not the
+      picked-but-failed replica id) agreed by both (2026-09-23).
+- [x] `strategy` field's source on a `no_healthy_replicas` round (config
+      name, not an invoked instance) settled (Junaid, 2026-09-23).
+- [ ] **New, needs Arundhati's call:** `DecisionRound.failureReason?`
+      (Junaid's proposal above) to close the gap where a retried request's
+      earlier rounds lose their failure reason once the HTTP response is
+      gone. Changes N2's shape, blocks N10/N11 until agreed.
 - [ ] `docs/decisions.md` entry confirmed and committed (both).
 
 Once every box is checked, N5 through N13 build against this doc.
