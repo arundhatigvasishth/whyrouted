@@ -5,6 +5,24 @@ when a choice would be expensive to reverse or isn't obvious from the code.
 
 ---
 
+## 2026-09-23: `score()` is additive to the frozen `RoutingStrategy` interface
+
+`RoutingStrategy` grows a second method, `score(candidates, weights):
+CandidateScore[]`, called by the engine alongside `pick()` for capture only.
+
+**Why this does not reopen the 2026-09-08 freeze:** that freeze was about
+keeping `pick()` ignorant of retry exclusion, specifically refusing to add an
+`exclude` parameter to it. `score()` changes neither `pick()`'s signature nor
+its selection logic; it is a read-only sibling the engine calls for
+observability. The freeze's boundary (the engine filters candidates and owns
+exclusion, strategies just score/pick from what they're handed) is unchanged
+and, if anything, reinforced by M4's `ExcludedCandidate` taxonomy giving the
+engine exclusion-reason ownership too.
+
+**Revisit when:** never expected to. If a future strategy needs `score()` to
+see anything `pick()` doesn't, that's a new question, not a reopening of
+this one.
+
 ## 2026-09-13: health-check interval and timeout retuned against measured probe latency
 
 `WR_HEALTH_INTERVAL_MS` 1000 -> 500, `WR_HEALTH_TIMEOUT_MS` 500 -> 200.

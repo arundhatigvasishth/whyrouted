@@ -1,12 +1,11 @@
 # M4 Shared Contract (N1 to N4)
 
-**Status:** N1 and N3 drafted by Junaid (2026-09-23), covering the scoring
-side. N2 and N4 drafted by Arundhati (2026-09-23), covering the decision
-record and the recording point, adjusted to the file paths N1/N3 corrected
-(see below). Junaid reviewed N2/N4 the same day: resolved Arundhati's
-N1/N3 gap, settled the `no_healthy_replicas` round's `strategy` field, and
-raised one new gap (`DecisionRound.failureReason?`, in N4) that still needs
-Arundhati's sign-off before N10/N11 build against it.
+**Status:** N1 through N4 fully agreed (2026-09-23). Junaid drafted N1/N3;
+Arundhati drafted N2/N4; each reviewed the other's half the same day. Two
+gaps surfaced and were closed in review: the N1/N3 scoring-coverage gap
+(narrowed to engine-level exclusions only) and N4's missing
+`DecisionRound.failureReason?` (added below). N5 through N13 build against
+this doc as written.
 **Covers:** the candidate score shape and `score()` method (N1), the decision
 record shape (N2), the exclusion-reason taxonomy (N3), and the `POST /route`
 decision-recording point (N4).
@@ -141,6 +140,8 @@ ejection/recovery timeline); it is the substrate M5a's
 
 ```ts
 // src/decisions/types.ts
+import type { ReplicaErrorKind } from "../adapter/types.js";
+
 export interface DecisionRound {
   /** Every candidate the strategy actually scored this round. Empty if none
    *  survived filtering. May also be missing a candidate the strategy itself
@@ -159,6 +160,15 @@ export interface DecisionRound {
   outcome: "picked" | "no_routable_replica" | "no_healthy_replicas";
   /** Present only when outcome === "picked". */
   pickedReplicaId?: string;
+  /**
+   * Why this round's pick didn't resolve the request, if it didn't. Absent
+   * on the round that actually returned 200. Mirrors RouteAttempt minus
+   * replicaId (redundant with pickedReplicaId here). Set by the API layer
+   * from the same ReplicaRequestError the retry loop already handles, so a
+   * multi-round Decision keeps its failure detail after the HTTP response
+   * carrying `attempts` is long gone.
+   */
+  failureReason?: { kind: ReplicaErrorKind; status?: number };
 }
 
 export interface Decision {
@@ -339,6 +349,16 @@ mirroring `RouteAttempt` minus `replicaId` (redundant with
 Small addition, no interface reshuffle, but it changes N2's shape, so it
 needs sign-off from both before N10/N11 build against it.
 
+**Arundhati's call (2026-09-23):** agreed, added to N2 above. One note on
+scope: `failureReason` only needs `kind`/`status`, not `retryable`. Whether a
+round's failure was retryable is always derivable from its position, any
+round but the last one was retryable by definition (the loop wouldn't have
+continued otherwise), and the last round's `failureReason` plus the overall
+`Decision.chosenReplicaId` being `null` already distinguishes
+`all_replicas_failed` (retryable, exhausted) from a non-retryable `502`
+(nothing more to infer from `retryable` itself in either case). Not adding
+the field.
+
 ---
 
 ## Frozen by this contract
@@ -367,7 +387,9 @@ needs sign-off from both before N10/N11 build against it.
 
 ---
 
-## Proposed `docs/decisions.md` entry (pending review)
+## `docs/decisions.md` entry
+
+Landed in `docs/decisions.md` alongside this doc:
 
 ```
 ## 2026-09-23: `score()` is additive to the frozen `RoutingStrategy` interface
@@ -389,9 +411,8 @@ see anything `pick()` doesn't, that's a new question, not a reopening of
 this one.
 ```
 
-Arundhati's read: agreed, this is the right framing and doesn't reopen the
-freeze. Not marking the checklist item done below until the N1/N3 gap above
-is also settled, since that gap touches the same interface.
+Both agree this is the right framing and doesn't reopen the freeze. Recorded
+in `docs/decisions.md` now that the N1/N3 gap it touches is also settled.
 
 ---
 
@@ -418,10 +439,10 @@ is also settled, since that gap touches the same interface.
       picked-but-failed replica id) agreed by both (2026-09-23).
 - [x] `strategy` field's source on a `no_healthy_replicas` round (config
       name, not an invoked instance) settled (Junaid, 2026-09-23).
-- [ ] **New, needs Arundhati's call:** `DecisionRound.failureReason?`
-      (Junaid's proposal above) to close the gap where a retried request's
-      earlier rounds lose their failure reason once the HTTP response is
-      gone. Changes N2's shape, blocks N10/N11 until agreed.
-- [ ] `docs/decisions.md` entry confirmed and committed (both).
+- [x] `DecisionRound.failureReason?` (Junaid's proposal, Arundhati agreed
+      2026-09-23) to close the gap where a retried request's earlier rounds
+      lose their failure reason once the HTTP response is gone. Landed in N2
+      above; no `retryable` field added, derivable from round position.
+- [x] `docs/decisions.md` entry confirmed and committed (both, 2026-09-23).
 
-Once every box is checked, N5 through N13 build against this doc.
+Every box is checked. N5 through N13 build against this doc.
