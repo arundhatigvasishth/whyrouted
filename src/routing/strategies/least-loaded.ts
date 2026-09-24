@@ -7,7 +7,7 @@
  */
 
 import type { ReplicaState } from "../../types.js";
-import type { RoutingStrategy } from "../types.js";
+import type { CandidateScore, RoutingStrategy } from "../types.js";
 
 export function createLeastLoaded(): RoutingStrategy {
   return {
@@ -24,6 +24,18 @@ export function createLeastLoaded(): RoutingStrategy {
         if (better) best = candidate;
       }
       return best.id;
+    },
+
+    // Score is just in-flight count: pick()'s own ranking key, so the
+    // candidate score() ranks lowest is always the one pick() returns (N7).
+    score(candidates: ReplicaState[]): CandidateScore[] {
+      return candidates.map((candidate) => ({
+        replicaId: candidate.id,
+        inFlight: candidate.runtime.inFlight,
+        latencyMs: candidate.runtime.latencyMs,
+        score: candidate.runtime.inFlight,
+        considered: true,
+      }));
     },
   };
 }
