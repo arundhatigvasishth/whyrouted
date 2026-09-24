@@ -377,9 +377,6 @@ the field.
 
 ## Not frozen
 
-- **Whether N3's "every replica appears somewhere" invariant holds for
-  strategy-level scoring gaps** (the latency-weighted null-latency case).
-  Flagged above, not resolved.
 - **`DecisionLog` is in-memory and unbounded**, same deferral as M3's
   failover log. Persistence (PRD §7: JSON lines -> SQLite) waits for M7/M8.
 - **`RouteResult`'s shape** grows again the moment M5a needs something from
