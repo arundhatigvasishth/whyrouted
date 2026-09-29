@@ -1,8 +1,8 @@
 # M5a Shared Contract (O1 to O4)
 
-**Status:** O1 and O2 drafted by Junaid (2026-09-29), pending Arundhati's
-review. O3 and O4 drafted by Arundhati (2026-09-29), pending Junaid's
-review. O5 through O14 build against this doc once every box below is checked.
+**Status:** fully agreed (2026-09-29). Junaid drafted O1/O2 and Arundhati
+reviewed them; Arundhati drafted O3/O4 and Junaid reviewed them. O5 through
+O14 build against this doc as written.
 **Covers:** the MCP server's process shape (O1), the tool response envelope
 (O2), the `explain_routing_decision` output shape (O3), and the
 `query_decisions` natural-language approach (O4).
@@ -488,16 +488,20 @@ Junaid's items (Arundhati reviewed 2026-09-29):
       an aggregate's `recordIds` is every decision id in range, which is long
       for a big window and accepted for M5a.
 
-Arundhati's items (pending Junaid):
-- [ ] O3: raw `Decision` plus derived, cited `lines`; no LLM in the tool.
-- [ ] O3: an unknown id reports `no_data` without claiming the request never
+Arundhati's items (Junaid reviewed 2026-09-29):
+- [x] O3: raw `Decision` plus derived, cited `lines`; no LLM in the tool.
+- [x] O3: an unknown id reports `no_data` without claiming the request never
       happened, given the in-memory log.
-- [ ] O4: no LLM in the tool; fixed question shapes; unsupported questions
-      rejected with the shape list.
-- [ ] O4: clock times read as server-local, resolved range always echoed.
-- [ ] O4: nearest-rank percentiles; empty window is `no_data`, not zeros.
-- [ ] **The latency gap:** add `latencyMs?: number` to `Decision` (option 1),
-      or pick another (both).
+- [x] O4: no LLM in the tool; fixed question shapes; unsupported questions
+      rejected with the shape list. Request ids are `crypto.randomUUID()`
+      (`handleRoute`), so recognizing a UUID is sound.
+- [x] O4: clock times read as server-local, resolved range always echoed.
+- [x] O4: nearest-rank percentiles; empty window is `no_data`, not zeros.
+- [x] **The latency gap:** agreed on option 1, `latencyMs?: number` on
+      `Decision`, set on the 200 path only. Checked against the code:
+      `latencyMs` comes back from `adapter.sendRequest` and is only put in
+      the response body today. It lands in its own follow-up PR that also
+      updates the M4 contract, as O4 describes, not in this one.
 
 Joint:
 - [ ] `get_fleet_status()` shape (`RegistrySnapshot` verbatim or a read model).
