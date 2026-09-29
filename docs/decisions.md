@@ -138,6 +138,10 @@ Making the interface async now would push `await` into the health scheduler, the
 when the MCP server becomes a second registry consumer). At that point the
 interface widens to Promise-returning and the call sites grow `await`.
 
+**Update (2026-09-29):** M5a did not force this. The MCP server runs in-process
+and reads the same store instance, see the 2026-09-29 entry above. The real
+trigger is now M8, when the MCP server becomes its own deployment.
+
 ## 2026-09-03: health scheduler stays in-process for M1
 
 Not extracted into its own service, despite the final architecture showing it
