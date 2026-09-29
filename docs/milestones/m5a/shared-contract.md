@@ -1,18 +1,17 @@
 # M5a Shared Contract (O1 to O4)
 
-**Status:** DRAFT. O3 and O4 drafted by Arundhati; O1 and O2 are Junaid's to
-draft and are stubbed below. Nothing here is agreed until Junaid reviews O3/O4
-and Arundhati reviews O1/O2, and the sign-off checklist at the bottom is
-checked. O5 through O14 build against this doc once it is.
-**Covers:** the MCP server process shape (O1), the tool response envelope
-(O2), `explain_routing_decision`'s output shape (O3), and how
-`query_decisions` turns a question into a grounded answer (O4).
+**Status:** O1 and O2 drafted by Junaid (2026-09-29), pending Arundhati's
+review. O3 and O4 drafted by Arundhati (2026-09-29), pending Junaid's
+review. O5 through O14 build against this doc once every box below is checked.
+**Covers:** the MCP server's process shape (O1), the tool response envelope
+(O2), the `explain_routing_decision` output shape (O3), and the
+`query_decisions` natural-language approach (O4).
 
 Landed / to land as:
-- O1: `docs/decisions.md` entry (Junaid)
-- O2: `src/mcp/types.ts` (`ToolResult`, designed by Junaid, built by Arundhati)
-- O3: `src/mcp/tools/explain-routing-decision.ts` (signature only here)
-- O4: `src/mcp/tools/query-decisions.ts` (signature only here), plus one
+- O1: `docs/decisions.md` (2026-09-29 entry), `src/main.ts` (wiring, O16)
+- O2: `src/mcp/types.ts` (Arundhati, O6, built from the shape below)
+- O3: `src/mcp/tools/explain-routing-decision.ts` (signature only)
+- O4: `src/mcp/tools/query-decisions.ts` (signature only), plus one
   additive change to `src/decisions/types.ts` (see O4, "The latency gap")
 
 Any change after sign-off goes through a PR that updates this doc and the
@@ -22,20 +21,134 @@ affected files together.
 
 ## O1: MCP server process shape
 
-*Junaid drafts. Leading answer from the task split: in-process, same Node
-process as the API server, direct references to the existing store
-instances, no Redis. Not restated here so it isn't decided by whoever wrote
-the stub.*
+**Decided: in-process.** The MCP server runs inside the same Node process as
+the API server, constructed in `main.ts` and handed the same `Registry`,
+`FailoverLog`, `DecisionLog`, and routing config instances the API server
+already holds. No second process, no Redis, no network hop.
 
-## O2: Tool response envelope
+The reasoning lives in `docs/decisions.md` (2026-09-29) so it stays findable
+after M5a closes. The short version: the failover log and decision log are
+in-memory too, so Redis for the registry alone would not let a second process
+see them, and M5b's action tools need to mutate routing config that only
+exists in this process.
 
-*Junaid drafts the shape; Arundhati builds it (O6).*
+**What this fixes for the rest of M5a:**
+- **Transport is HTTP, not stdio.** `main.ts` logs to stdout and a stdio MCP
+  server owns its process's stdout, so the two cannot share a process. O5
+  serves MCP over Streamable HTTP on its own port, bound to `config.host`
+  like the API server. The port comes from config (`WR_MCP_PORT`, added in
+  O5), not hardcoded.
+- **Tools take store instances, not a client.** Each tool factory receives the
+  `RegistryStore` / `FailoverLog` / `DecisionLog` it reads as plain arguments,
+  the same way `createStatusApp` takes its deps. Tests hand in hand-built
+  stores with no server running.
+- **Tool handlers are async** even though every store call is synchronous
+  today. When M8 splits the deployment and the stores widen to Promises, no
+  tool's signature changes.
 
-Assumed below, and needed from O2 as written: every tool returns
-`ToolResult<T>`, an `ok: true` arm carrying `data: T` and a `groundedIn`
-marker, and an `ok: false` arm carrying a `reason: string`. O3 and O4 define
-only the `T` for their tools and their `ok: false` reasons. If O2 lands with a
-different shape, O3/O4's `data` types still hold; only the wrapper changes.
+**Open for O17, not decided here:** how a real client reaches an HTTP server
+on localhost (Claude Desktop launches local servers as stdio subprocesses, so
+it may need a bridge, and claude.ai needs a reachable URL). This changes how
+the demo is wired, not how the server is built, so it does not block O5. If
+O17 finds it painful, the fallback is a thin stdio entry point that proxies to
+the running HTTP server, still not a second copy of the state.
+
+---
+
+## O2: Tool response envelope (`src/mcp/types.ts`)
+
+Every read tool returns through one shape, so PRD §5.6's grounding constraint
+("if the data doesn't support an answer, the tool says so explicitly rather
+than inferring") is enforced in one place instead of re-implemented per tool.
+Junaid drafts the shape here, Arundhati builds it as O6. O5 (scaffold) and the
+tools are written against the types and `dispatch` signature below, so both
+tracks can start before O6 merges.
+
+```ts
+// src/mcp/types.ts
+
+export type GroundingSource = "registry" | "failover_log" | "decision_log";
+
+export interface Grounding {
+  source: GroundingSource;
+  /** ISO 8601. Stamped by dispatch when the read ran, never by a tool. */
+  queriedAt: string;
+  /** Ids of the records the answer was built from: replica ids for the
+   *  registry, FailoverEvent.id, or Decision.id. Never empty on an ok result. */
+  recordIds: string[];
+}
+
+export type ToolFailureCode = "no_data" | "invalid_input" | "internal_error";
+
+/** What a caller of a tool always gets back. */
+export type ToolResult<T> =
+  | { ok: true; data: T; groundedIn: Grounding }
+  | { ok: false; code: ToolFailureCode; reason: string };
+
+/** What a tool handler returns. It never builds a ToolResult itself. */
+export type ToolOutput<T> =
+  | { kind: "data"; data: T; source: GroundingSource; recordIds: string[] }
+  | { kind: "no_data"; reason: string }
+  | { kind: "invalid_input"; reason: string };
+
+export type ToolHandler<A, T> = (args: A) => ToolOutput<T> | Promise<ToolOutput<T>>;
+
+export interface DispatchOptions {
+  /** Clock for `queriedAt`. Defaults to `() => new Date()`. Tests inject one. */
+  now?: () => Date;
+}
+
+/** Wrap a handler so every call returns a ToolResult. O6 implements this. */
+export function dispatch<A, T>(
+  handler: ToolHandler<A, T>,
+  opts?: DispatchOptions,
+): (args: A) => Promise<ToolResult<T>>;
+```
+
+**Rules `dispatch` enforces, once, for every tool:**
+- **An `ok: true` result always carries grounding.** A tool cannot return
+  data without naming its source and the records behind it, because
+  `ToolOutput`'s `data` variant requires both. There is no `ok: true` with
+  `data: null` and no partial-success shape: a caller can always tell real
+  data from a "no data" response, with no middle ground.
+- **Zero records means no data.** If a handler returns `kind: "data"` with an
+  empty `recordIds`, `dispatch` turns it into `{ ok: false, code: "no_data" }`.
+  This is what makes an empty failover range or an aggregate over zero
+  decisions report "no data" instead of a confident-sounding empty answer or a
+  computed 0. The `reason` should say what was searched (the range, the
+  request id), not just "nothing found".
+- **`queriedAt` is stamped by `dispatch`**, not the tool, so a tool cannot
+  backdate or omit it.
+- **A thrown error becomes `internal_error`**, with the error message as
+  `reason`. It never escapes as a rejected promise, so one broken tool cannot
+  take down the server.
+- **`invalid_input` is for arguments that parse but cannot be honored** (a
+  time range with `from` after `to`, an unrecognizable range string). Shape
+  validation of arguments stays with the SDK's input schema at registration.
+
+**The protocol mapping belongs to O5, not to this file.** `types.ts` imports
+nothing from `@modelcontextprotocol/sdk`, so `dispatch` and every tool stay
+testable without a server. O5 converts a `ToolResult` into an MCP
+`CallToolResult` at registration: one text content block holding the
+`ToolResult` as JSON, with `isError: true` for `invalid_input` and
+`internal_error` and `isError: false` for `no_data`. A "no data" answer is a
+correct, grounded response, not a failure of the call.
+
+**How O5 builds before O6 lands:** O5 imports these types and calls
+`dispatch` from the start. Until O6 merges, `src/mcp/types.ts` on Junaid's
+branch holds a stub `dispatch` that stamps `queriedAt` and passes `data`
+through with no empty-records or error handling. The signature is the part
+that has to match, and this doc is what fixes it.
+
+### Not frozen
+- **A tool-call activity hook.** The M6 dashboard wants a feed of MCP tool
+  calls (PRD §5.7), and `dispatch` is the natural place to emit it. Not
+  designed or built here: `DispatchOptions` grows an optional field when M6
+  needs one.
+- **Multi-source tools.** `Grounding.source` is a single value because all
+  four M5a tools read exactly one store. A future tool that joins two (say,
+  decisions plus registry) would change this to an array. That is a new
+  question then, not something to pre-build now.
 
 ---
 
@@ -96,14 +209,17 @@ export interface ExplainRoutingDecisionData {
 }
 ```
 
-`ToolResult<ExplainRoutingDecisionData>` is the return type.
+The handler returns `kind: "data"` with `source: "decision_log"` and
+`recordIds: [decision.id]`, and `dispatch` (O2) wraps it into
+`ToolResult<ExplainRoutingDecisionData>`.
 
 ### Rules
 
 - **Lookup is `DecisionLog.get(request_id)`, exact match only.** No prefix
-  match, no "closest request id." An unknown id returns `ok: false` with a
-  reason of the form `no decision recorded for request id "<id>"`.
-- **The `ok: false` reason does not claim the request never happened.** The
+  match, no "closest request id." An unknown id returns `kind: "no_data"`
+  (surfaced as `code: "no_data"`) with a reason of the form
+  `no decision recorded for request id "<id>"`.
+- **The `no_data` reason does not claim the request never happened.** The
   log is in-memory (M4, "Not frozen"), so a restart empties it. The reason
   says "no decision recorded," which is true in both cases, and does not say
   "no such request."
@@ -172,7 +288,7 @@ question into a structured query, the structured query runs against
   it is stated in the tool's own "unsupported" response rather than hidden
   (see below).
 - **Why that is acceptable:** a client model can rephrase the user's
-  question into one of the supported shapes, and the `ok: false` reason
+  question into one of the supported shapes, and the `invalid_input` reason
   lists them, so a rejected question is one retry away from working, not a
   dead end. An LLM inside the tool would make the fabrication risk PRD §8
   measures *live in the tool*; keeping it out keeps it in the client, where
@@ -193,7 +309,7 @@ M5a demo.
 
 ### Supported question shapes
 
-Anything not matching returns `ok: false` (below). Matching is
+Anything not matching returns a failure (see "Failure codes" below). Matching is
 case-insensitive.
 
 | Shape | Recognized by | Answer |
@@ -201,7 +317,7 @@ case-insensitive.
 | **Point lookup** | a UUID in the text (the format `crypto.randomUUID()` emits) | delegates to the O3 tool's logic; returns `ExplainRoutingDecisionData` |
 | **Aggregate over a range** | a time range (below) plus an aggregate word: `p50`, `p95`, `p99`, `latency`, `count`, `how many`, `failed`, `failures`, `per replica` | `AggregateData` below |
 
-Two UUIDs, or a UUID plus a range, is ambiguous: `ok: false`, reason says to
+Two UUIDs, or a UUID plus a range, is ambiguous: `invalid_input`, reason says to
 ask one or the other. The tool never picks one silently.
 
 ### Time ranges
@@ -219,7 +335,7 @@ on the current date. This is a guess, so the resolved `{ from, to }` is
 another zone sees the mismatch instead of a confidently wrong p99.
 
 A range that doesn't parse, has `from` after `to`, or a clock time that
-isn't a valid time returns `ok: false`; the tool does not fall back to "all
+isn't a valid time returns `invalid_input`; the tool does not fall back to "all
 time."
 
 ### Aggregate answer shape
@@ -256,8 +372,9 @@ export interface AggregateData {
   figure the question named. Asking for p99 also returns p50, p95, and the
   counts. This keeps the parser from having to decide what the user
   "really wanted" and keeps every answer self-describing.
-- **`total === 0` is `ok: false`,** reason `no decisions recorded between
-  <from> and <to>`. It is not `ok: true` with zeros: a p99 of 0 for an empty
+- **`total === 0` is `no_data`,** reason `no decisions recorded between
+  <from> and <to>` (O2's zero-records rule, applied as written). It is not
+  `ok: true` with zeros: a p99 of 0 for an empty
   window is exactly the fabricated middle ground the grounding constraint
   forbids.
 - **`total > 0` but no latency values** (all requests failed) returns
@@ -306,21 +423,27 @@ end-to-end request latency for the serving replica. It is not the router's
 own added overhead (PRD §8's "p99 routing overhead" metric is a different
 number and is not answerable from this tool).
 
-### `ok: false` reasons
+### Failure codes and reasons
 
-Fixed set, so callers and tests can rely on them:
+Uses O2's codes. Reasons begin with fixed text so callers and tests can
+rely on them:
 
-| Condition | Reason begins with |
-|---|---|
-| no UUID and no parseable range | `unsupported question` then the list of supported shapes |
-| UUID not in the log | `no decision recorded for request id` |
-| range parsed, zero decisions | `no decisions recorded between` |
-| ambiguous (UUID plus range, or two UUIDs) | `ambiguous question` |
-| range unparseable or inverted | `could not read a time range` |
+| Condition | Code | Reason begins with |
+|---|---|---|
+| no UUID and no parseable range | `invalid_input` | `unsupported question` then the list of supported shapes |
+| UUID not in the log | `no_data` | `no decision recorded for request id` |
+| range parsed, zero decisions | `no_data` | `no decisions recorded between` |
+| ambiguous (UUID plus range, or two UUIDs) | `invalid_input` | `ambiguous question` |
+| range unparseable or inverted | `invalid_input` | `could not read a time range` |
+
+`recordIds` on a successful answer: the point lookup returns `[decision.id]`;
+an aggregate returns the `id` of every decision in range. For a very large
+window that list is long. The log is in-memory and demo-scale, so accepted
+for M5a.
 
 ---
 
-## Also to agree (Junaid's O1/O2 draft settles these, listed so they aren't lost)
+## Still to agree (the task split's "also agree" items)
 
 - Whether `get_fleet_status()` returns `RegistrySnapshot` verbatim or a
   reshaped read-model.
@@ -352,20 +475,29 @@ Fixed set, so callers and tests can rely on them:
 
 ## Sign-off checklist
 
-- [ ] O3 (b): raw `Decision` plus derived, cited `lines`; no LLM in the tool
-      (Junaid to review).
-- [ ] O3: `ok: false` wording does not claim non-existence, given the
-      in-memory log (Junaid to review).
+Junaid's items (Arundhati reviewed 2026-09-29):
+- [x] O1 in-process decision and its `docs/decisions.md` entry. Checked the
+      claims against the code: `main.ts` logs to stdout, `RedisRegistry` is
+      still a throwing stub, `config.host` exists. Agreed that HTTP transport
+      follows from running in-process.
+- [x] O2 envelope: `ToolResult` / `ToolOutput` shapes, the `dispatch`
+      signature, and the zero-records-means-no-data rule. Ran both of my
+      tools through it (see O3 and O4 above); no changes needed. One note:
+      an aggregate's `recordIds` is every decision id in range, which is long
+      for a big window and accepted for M5a.
+
+Arundhati's items (pending Junaid):
+- [ ] O3: raw `Decision` plus derived, cited `lines`; no LLM in the tool.
+- [ ] O3: an unknown id reports `no_data` without claiming the request never
+      happened, given the in-memory log.
 - [ ] O4: no LLM in the tool; fixed question shapes; unsupported questions
-      rejected with the shape list (Junaid to review).
-- [ ] O4: clock times read as server-local, resolved range always echoed
-      (Junaid to review).
-- [ ] O4: nearest-rank percentiles; empty window is `ok: false`, not zeros
-      (Junaid to review).
+      rejected with the shape list.
+- [ ] O4: clock times read as server-local, resolved range always echoed.
+- [ ] O4: nearest-rank percentiles; empty window is `no_data`, not zeros.
 - [ ] **The latency gap:** add `latencyMs?: number` to `Decision` (option 1),
       or pick another (both).
-- [ ] O1 process shape and its `docs/decisions.md` entry (Junaid drafts,
-      Arundhati reviews).
-- [ ] O2 `ToolResult` shape (Junaid drafts, Arundhati reviews).
-- [ ] Shared time-range parser for `get_failover_history` and
-      `query_decisions` (both).
+
+Joint:
+- [ ] `get_fleet_status()` shape (`RegistrySnapshot` verbatim or a read model).
+- [ ] `get_failover_history`'s `time_range` shape, and one shared range parser
+      with `query_decisions`.
