@@ -68,7 +68,7 @@ afterEach(async () => {
 
 interface RouteResponse {
   status: number;
-  body: { replicaId?: string; error?: string };
+  body: { replicaId?: string; latencyMs?: number; error?: string };
 }
 
 describe("M4 end to end", () => {
@@ -173,6 +173,10 @@ describe("M4 end to end", () => {
     // (N16's core assertion): the decision log and the HTTP responses agree
     // on where every request actually went.
     expect(decisions.map((d) => d.chosenReplicaId)).toEqual(responses.map((r) => r.body.replicaId));
+
+    // A served Decision carries the same latency the client's response body
+    // reported (m5a shared contract, O4: the latency gap).
+    expect(decisions.map((d) => d.latencyMs)).toEqual(responses.map((r) => r.body.latencyMs));
 
     // Every decision id is unique: one Decision per request, not reused.
     expect(new Set(decisions.map((d) => d.id)).size).toBe(5);

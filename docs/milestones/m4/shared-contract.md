@@ -382,6 +382,14 @@ the field.
 - **`RouteResult`'s shape** grows again the moment M5a needs something from
   it `explain_routing_decision` can't get from the `DecisionLog` alone.
 
+## Amended by M5a
+
+- **`Decision` gained an optional `latencyMs`** (2026-09-29), so
+  `query_decisions` can compute percentiles from the decision log. Set on the
+  200 path only, so it is present exactly when `chosenReplicaId` is non-null.
+  Additive: no other field, and no `DecisionLog` method, changed. See
+  `docs/milestones/m5a/shared-contract.md`, O4, "The latency gap".
+
 ---
 
 ## `docs/decisions.md` entry
