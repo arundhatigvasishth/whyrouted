@@ -5,6 +5,40 @@ when a choice would be expensive to reverse or isn't obvious from the code.
 
 ---
 
+## 2026-09-29: the MCP server runs in-process with the API server for M5a
+
+The MCP server mounts inside the existing Node process (`main.ts`) and holds
+direct references to the same `Registry`, `FailoverLog`, `DecisionLog`, and
+routing config instances the API server already holds. No second process, no
+Redis, no network hop between the tools and the state they read.
+
+This resolves the question the 2026-09-03 `RegistryStore` entry deferred to
+M5a. It does not reopen any interface: `RegistryStore`, `FailoverLog`, and
+`DecisionLog` stay synchronous.
+
+**Why:** same reasoning as the health scheduler staying in-process
+(2026-09-03): two coordinated processes before Docker/K8s exist to manage them
+is overhead with no payoff. Two things make it stronger here than for the
+scheduler:
+- Redis alone would not be enough. The failover log and decision log are also
+  plain in-memory stores with no persistence (deferred to M7/M8), so a second
+  process would need all three shared, not just the registry. `RedisRegistry`
+  is still a throwing stub.
+- M5b's action tools (`set_routing_strategy`, `set_scoring_weights`) mutate the
+  live routing config, which only exists in this process's memory. A separate
+  MCP process would have no way to reach it without inventing an IPC channel.
+
+**Consequence for transport:** `main.ts` already logs to stdout, and a stdio
+MCP server owns its process's stdout, so an in-process server cannot use stdio.
+It serves MCP over HTTP (Streamable HTTP) on its own port instead. Tool
+handlers are async from the start, so the eventual move to a shared store
+does not change any tool's signature.
+
+**Revisit when:** M8 (deployment), where the MCP server becomes its own K8s
+deployment (PRD §7, §9). That is when the registry and both logs need a shared
+backing store, and `RegistryStore` and friends widen to Promise-returning as
+the 2026-09-03 entry already says.
+
 ## 2026-09-23: `score()` is additive to the frozen `RoutingStrategy` interface
 
 `RoutingStrategy` grows a second method, `score(candidates, weights):
