@@ -42,9 +42,11 @@ exists in this process.
   `RegistryStore` / `FailoverLog` / `DecisionLog` it reads as plain arguments,
   the same way `createStatusApp` takes its deps. Tests hand in hand-built
   stores with no server running.
-- **Tool handlers are async** even though every store call is synchronous
-  today. When M8 splits the deployment and the stores widen to Promises, no
-  tool's signature changes.
+- **`dispatch` is async and awaits the handler**, and `ToolHandler` may
+  return a plain value or a Promise. Every store call is synchronous today, so
+  handlers can be too. When M8 splits the deployment and the stores widen to
+  Promises, a handler becomes async with no change to its signature or to
+  anything that registers it.
 
 **Open for O17, not decided here:** how a real client reaches an HTTP server
 on localhost (Claude Desktop launches local servers as stdio subprocesses, so
