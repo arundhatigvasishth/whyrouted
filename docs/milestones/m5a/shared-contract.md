@@ -1,8 +1,8 @@
 # M5a Shared Contract (O1 to O4)
 
-**Status:** O1 and O2 drafted by Junaid (2026-09-29), pending Arundhati's
-review. O3 and O4 drafted by Arundhati (2026-09-29), pending Junaid's
-review. O5 through O14 build against this doc once every box below is checked.
+**Status:** fully agreed (2026-09-29). Junaid drafted O1/O2 and Arundhati
+reviewed them; Arundhati drafted O3/O4 and Junaid reviewed them. O5 through
+O14 build against this doc as written.
 **Covers:** the MCP server's process shape (O1), the tool response envelope
 (O2), the `explain_routing_decision` output shape (O3), and the
 `query_decisions` natural-language approach (O4).
@@ -445,15 +445,31 @@ for M5a.
 
 ---
 
-## Still to agree (the task split's "also agree" items)
+## Also agreed: the state tools' argument and result shapes
 
-- Whether `get_fleet_status()` returns `RegistrySnapshot` verbatim or a
-  reshaped read-model.
-- Whether `get_failover_history`'s `time_range` is `{ from?, to? }` exactly
-  or a friendlier shape. **Constraint from O4 above:** if it takes relative
-  forms like "last 10 minutes," it should share one range parser with
-  `query_decisions` rather than have two. Suggest that parser live in
-  `src/mcp/time-range.ts` and be owned by whoever lands first.
+Settled by Junaid (2026-09-29) for his two tools, since they are the only
+open items left in the task split's "also agree" note.
+
+- **`get_fleet_status()` takes no arguments and returns `RegistrySnapshot`
+  verbatim.** No reshaped read model: the definition of done says it matches
+  `GET /status`, and a second shape would be a second thing to keep in sync.
+  `source` is `"registry"` and `recordIds` are the replica ids in the
+  snapshot. An empty registry is `no_data` under O2's zero-records rule.
+- **`get_failover_history` takes `{ from?: string; to?: string; last?: string }`.**
+  `from` and `to` are ISO 8601 and pass straight to `FailoverLog.query`, which
+  is inclusive on both ends. `last` is a relative phrase such as `"10 minutes"`
+  or `"1 hour"`, for callers that cannot know the server's clock. Giving
+  `last` together with `from` or `to` is `invalid_input`. Omitting all three
+  queries the whole log. `source` is `"failover_log"` and `recordIds` are the
+  `FailoverEvent.id`s returned. An empty range is `no_data` with a reason
+  naming the range, never an empty `ok: true` list.
+- **One shared range parser, `src/mcp/time-range.ts`, owned by Junaid.** It
+  resolves the forms O4 lists (ISO pair, clock times, `last N unit`) to
+  `{ from, to }` ISO UTC strings, and `invalid_input` on anything it cannot
+  read. `get_failover_history` calls it for `last`; `query_decisions` calls it
+  on the range phrase it pulls out of the question. Junaid lands it in its own
+  small PR right after the scaffold, before Arundhati starts the aggregate
+  case, so neither track writes a second parser.
 
 ---
 
@@ -488,18 +504,22 @@ Junaid's items (Arundhati reviewed 2026-09-29):
       an aggregate's `recordIds` is every decision id in range, which is long
       for a big window and accepted for M5a.
 
-Arundhati's items (pending Junaid):
-- [ ] O3: raw `Decision` plus derived, cited `lines`; no LLM in the tool.
-- [ ] O3: an unknown id reports `no_data` without claiming the request never
+Arundhati's items (Junaid reviewed 2026-09-29):
+- [x] O3: raw `Decision` plus derived, cited `lines`; no LLM in the tool.
+- [x] O3: an unknown id reports `no_data` without claiming the request never
       happened, given the in-memory log.
-- [ ] O4: no LLM in the tool; fixed question shapes; unsupported questions
-      rejected with the shape list.
-- [ ] O4: clock times read as server-local, resolved range always echoed.
-- [ ] O4: nearest-rank percentiles; empty window is `no_data`, not zeros.
-- [ ] **The latency gap:** add `latencyMs?: number` to `Decision` (option 1),
-      or pick another (both).
+- [x] O4: no LLM in the tool; fixed question shapes; unsupported questions
+      rejected with the shape list. Request ids are `crypto.randomUUID()`
+      (`handleRoute`), so recognizing a UUID is sound.
+- [x] O4: clock times read as server-local, resolved range always echoed.
+- [x] O4: nearest-rank percentiles; empty window is `no_data`, not zeros.
+- [x] **The latency gap:** agreed on option 1, `latencyMs?: number` on
+      `Decision`, set on the 200 path only. Checked against the code:
+      `latencyMs` comes back from `adapter.sendRequest` and is only put in
+      the response body today. It lands in its own follow-up PR that also
+      updates the M4 contract, as O4 describes, not in this one.
 
 Joint:
-- [ ] `get_fleet_status()` shape (`RegistrySnapshot` verbatim or a read model).
-- [ ] `get_failover_history`'s `time_range` shape, and one shared range parser
-      with `query_decisions`.
+- [x] `get_fleet_status()` shape and `get_failover_history`'s `time_range`,
+      with one shared range parser (Junaid, see "Also agreed" above).
+      Arundhati to confirm on the follow-up.
