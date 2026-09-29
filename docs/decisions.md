@@ -31,8 +31,8 @@ scheduler:
 **Consequence for transport:** `main.ts` already logs to stdout, and a stdio
 MCP server owns its process's stdout, so an in-process server cannot use stdio.
 It serves MCP over HTTP (Streamable HTTP) on its own port instead. Tool
-handlers are async from the start, so the eventual move to a shared store
-does not change any tool's signature.
+calls go through an async `dispatch` from the start, so the eventual move to
+a shared store does not change any tool's signature.
 
 **Revisit when:** M8 (deployment), where the MCP server becomes its own K8s
 deployment (PRD §7, §9). That is when the registry and both logs need a shared
