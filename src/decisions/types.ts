@@ -57,6 +57,14 @@ export interface Decision {
    *  request ended in any kind of failure, including a non-retryable 502
    *  where a replica was picked but never returned a usable response. */
   chosenReplicaId: string | null;
+  /**
+   * The adapter's end-to-end request latency, in ms, for the replica that
+   * served the request. Set on the 200 path only, so it is present exactly
+   * when `chosenReplicaId` is non-null. It is not the router's own overhead.
+   * Added for M5a's `query_decisions` percentiles
+   * (docs/milestones/m5a/shared-contract.md, O4, "The latency gap").
+   */
+  latencyMs?: number;
 }
 
 export interface DecisionLog {
