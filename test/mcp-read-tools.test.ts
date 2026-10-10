@@ -78,11 +78,11 @@ describe("read tools over MCP", () => {
   it("registers the read tools and no M5b action tool", async () => {
     const { client } = await boot();
     const names = (await client.listTools()).tools.map((t) => t.name);
-    // query_decisions joins this list when it lands.
     expect(names.sort()).toEqual([
       "explain_routing_decision",
       "get_failover_history",
       "get_fleet_status",
+      "query_decisions",
     ]);
     for (const action of ACTION_TOOLS) expect(names).not.toContain(action);
   });
