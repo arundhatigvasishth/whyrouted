@@ -357,7 +357,7 @@ npm run start:fleet
 npm test
 ```
 
-Runs unit tests for every module plus three integration tests, no mocks:
+Runs unit tests for every module plus four integration tests, no mocks:
 
 - `test/integration/m1.test.ts` boots the real system as a child process and
   drives the kill/revive arc from the manual demo above, asserting the fleet
@@ -378,6 +378,12 @@ Runs unit tests for every module plus three integration tests, no mocks:
   the client's real response, a full scored candidate set per round, and
   the retried request's two rounds both captured with the right exclusion
   reason and failure detail.
+- `test/integration/m5a.test.ts` (in-process again) routes real traffic, kills a
+  replica so one request retries, then asks all four MCP read tools about it
+  through the SDK's client over HTTP, asserting each answer against the
+  underlying store, that every `recordIds` list matches real records, and that
+  a question the data cannot answer is `no_data` or `invalid_input`, never a
+  guess.
 
 ## Project structure
 

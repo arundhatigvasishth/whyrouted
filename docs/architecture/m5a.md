@@ -7,13 +7,13 @@ tools answer only from live or recorded data, that the grounding rule is
 enforced in one place and not per tool, that the in-process design held, and
 that no action-tool (M5b) or dashboard (M6) concern leaked into M5a code.
 
-**Scope reviewed:** everything on `main` at merge of PR #52: `src/mcp/`
+**Scope reviewed:** everything on `main` at merge of PR #55: `src/mcp/`
 (`types.ts`, `server.ts`, `time-range.ts`, `tools/*`), the MCP wiring in
 `src/main.ts` and `WR_MCP_PORT` in `src/config.ts`, the `latencyMs` field on
 `Decision` (`src/decisions/types.ts`), `docs/milestones/m5a/shared-contract.md`,
-`docs/decisions.md`, and the test suite (269 tests, including
-`test/mcp-read-tools.test.ts`, which drives all four tools through a real MCP
-client).
+`docs/decisions.md`, the README's MCP section, and the test suite (270 tests,
+including `test/mcp-read-tools.test.ts` and `test/integration/m5a.test.ts`,
+which drive the tools through a real MCP client over HTTP).
 
 ---
 
@@ -158,12 +158,25 @@ What is verified:
   question, and an unreadable range each have a test asserting the specific
   non-fabricating response.
 
+- End to end through a client: `test/integration/m5a.test.ts` routes real
+  traffic, kills a replica, and asks all four tools about it through the MCP
+  SDK's client over HTTP. It checks that the explain output equals the
+  recorded decision and every cited path resolves, that the aggregate's p99
+  equals the slowest latency the client actually received, and that every
+  `recordIds` list matches the ids in the underlying store.
+
 **What is not yet verified, stated plainly:** the task split's definition of
-done says the metric should be "measured, not just asserted." The tests above
-show the tools do not fabricate. They do not measure a client model's
-prose answer against the tool's output, which needs the Claude Desktop demo
-(joint task, below). Until that is run, "100% grounded" is established for the
-tools' own output, not for what a client says about it.
+done says the metric should be "measured, not just asserted." The integration
+test measures the tools' output against real recorded data through a real
+protocol client. It does not measure a client *model's* prose answer against
+that output, and it does not check that a line's wording matches the value at
+its cite (the unit tests in `test/mcp-explain.test.ts` cover the wording).
+Junaid reports separately checking a stdio client reaching the running server
+through `mcp-remote`, the route Claude Desktop uses (all four tools listed,
+`get_fleet_status` returned live data); that is his check, not part of the
+test suite. Claude Desktop itself has not been run against the server, so
+"100% grounded" is established for the tools' output, not for what a model
+says about it.
 
 ## 7. Known deferrals: carry into M5b, do not fix now
 
@@ -192,9 +205,12 @@ tools' own output, not for what a client says about it.
 - [x] `query_decisions` answers a point lookup and an aggregate/time-range
   question, grounded in decision-log data
 - [x] The grounding constraint holds for all four tools at the tool level (§6)
-- [ ] The grounding constraint is **measured** through a real MCP client (§6)
-- [ ] Demoed live through Claude Desktop or `claude.ai`
-- [x] Unit + integration tests green in CI (269)
+- [x] The grounding constraint is **measured** against real recorded data
+  through an MCP client over HTTP (`test/integration/m5a.test.ts`, §6)
+- [ ] Demoed live through Claude Desktop or `claude.ai`; a model's prose answer
+  checked against the tool output (§6)
+- [x] README documents the server and how to point a client at it (PR #55)
+- [x] Unit + integration tests green in CI (270)
 - [ ] Both authors have signed off (this document; Junaid's review pending,
   see §9)
 
@@ -205,6 +221,9 @@ tools' own output, not for what a client says about it.
 - [x] Dispatch and grounding envelope, `explain_routing_decision`,
   `query_decisions`, the `latencyMs` field: built and self-reviewed
   (Arundhati, PRs #45, #46, #47, #52)
+- [x] M5a integration test and README section: built by Junaid (PRs #53,
+  #55); both reviewed and run locally before merge, test run twice from a
+  clean worktree (Arundhati)
 - [x] Server scaffold, `get_fleet_status`, `get_failover_history`, the shared
   range parser, `main.ts` wiring: built by Junaid (PRs #48, #49, #50, #51);
   wiring PR #51 re-run locally (typecheck and full suite) before merge
@@ -212,9 +231,9 @@ tools' own output, not for what a client says about it.
 - [ ] **Junaid's review of this document is pending.** Drafted solo, flagged
   plainly rather than claimed as a completed mutual sign-off, consistent with
   how the M3 and M4 reviews handled the same situation.
-- [ ] **Claude Desktop demo not yet run.** Both items marked open in §8 depend
-  on it.
+- [ ] **Claude Desktop demo not yet run.** The open demo item in §8 depends on
+  it, and so does checking a model's answer against the tool output.
 
 **M5a is functionally complete and merged to `main`, apart from the live
-client demo and the README section. Closed pending Junaid's read of this
-document and that demo.**
+Claude Desktop demo. Closed pending Junaid's read of this document and that
+demo.**
