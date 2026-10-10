@@ -44,7 +44,7 @@ const AGGREGATE_WORD = /\b(?:p50|p95|p99|latency|count|how many|failed|failures|
 
 const SUPPORTED =
   'Supported questions: a request id ("why did request <uuid> go where it did"), ' +
-  'or an aggregate over a time range using p50, p95, p99, latency, count, how many, failed, failures or per replica ' +
+  "or an aggregate over a time range using p50, p95, p99, latency, count, how many, failed, failures or per replica " +
   '("what was p99 between 3:00 and 3:10", "how many requests failed in the last 10 minutes").';
 
 /** Nearest-rank percentile of an ascending array: the value at 1-based index ceil(p/100 * n). */
@@ -53,7 +53,10 @@ function nearestRank(sorted: number[], p: number): number {
 }
 
 /** Aggregate a non-empty set of decisions. */
-export function aggregate(decisions: Decision[], range: { from: string; to: string }): AggregateData {
+export function aggregate(
+  decisions: Decision[],
+  range: { from: string; to: string },
+): AggregateData {
   const servedByReplica: Record<string, number> = {};
   const latencies: number[] = [];
   let served = 0;
@@ -92,7 +95,10 @@ export function createQueryDecisions(deps: {
   return (args) => {
     const question = args?.natural_language_query;
     if (typeof question !== "string" || question.trim() === "") {
-      return { kind: "invalid_input", reason: `natural_language_query must be a non-empty string. ${SUPPORTED}` };
+      return {
+        kind: "invalid_input",
+        reason: `natural_language_query must be a non-empty string. ${SUPPORTED}`,
+      };
     }
 
     const ids = [...question.matchAll(UUID)].map((m) => m[0].toLowerCase());
@@ -101,7 +107,8 @@ export function createQueryDecisions(deps: {
     if (ids.length > 1 || (ids.length === 1 && found.kind !== "none")) {
       return {
         kind: "invalid_input",
-        reason: "ambiguous question: ask about one request id or one time range, not both or several",
+        reason:
+          "ambiguous question: ask about one request id or one time range, not both or several",
       };
     }
 
@@ -128,7 +135,10 @@ export function createQueryDecisions(deps: {
 
     const decisions = deps.decisionLog.query({ from: range.from, to: range.to });
     if (decisions.length === 0) {
-      return { kind: "no_data", reason: `no decisions recorded between ${range.from} and ${range.to}` };
+      return {
+        kind: "no_data",
+        reason: `no decisions recorded between ${range.from} and ${range.to}`,
+      };
     }
     return {
       kind: "data",
