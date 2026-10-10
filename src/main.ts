@@ -108,7 +108,7 @@ async function main(): Promise<void> {
   );
 
   const mcp: RunningMcpServer = await startMcpServer({
-    tools: createReadTools({ registry, failoverLog }),
+    tools: createReadTools({ registry, failoverLog, decisionLog }),
     port: config.mcpPort,
     host: config.host,
   });
