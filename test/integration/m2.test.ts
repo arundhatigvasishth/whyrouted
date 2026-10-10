@@ -36,6 +36,7 @@ function envFor({ strategy, basePort, statusPort }: Scenario): Record<string, st
     WR_FLEET_SIZE: "3",
     WR_BASE_PORT: String(basePort),
     WR_STATUS_PORT: String(statusPort),
+    WR_MCP_PORT: String(statusPort + 5),
     WR_HEALTH_INTERVAL_MS: "300",
     WR_HEALTH_TIMEOUT_MS: "200",
     WR_UNHEALTHY_THRESHOLD: "2",
