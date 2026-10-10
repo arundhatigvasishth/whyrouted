@@ -5,7 +5,8 @@
  * it to come up, register every replica in the registry, start the health
  * scheduler polling through the HTTP adapter, build the routing engine over
  * the registry and the live routing config, construct the failover and
- * decision logs, and expose `GET /status` and `POST /route`.
+ * decision logs, expose `GET /status` and `POST /route`, and serve the MCP
+ * read tools over the same stores (in-process, docs/decisions.md 2026-09-29).
  *
  * Everything below depends on the shared contracts (`src/adapter/types.ts`,
  * `src/types.ts`, `src/routing/*`) only, swapping the registry backend or the
@@ -22,6 +23,8 @@ import { createRoutingEngine } from "./routing/engine.js";
 import { startStatusServer, type RunningStatusServer } from "./api/server.js";
 import { createFailoverLog } from "./events/failover-log.js";
 import { createDecisionLog } from "./decisions/decision-log.js";
+import { startMcpServer, type RunningMcpServer } from "./mcp/server.js";
+import { createReadTools } from "./mcp/tools/index.js";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -104,10 +107,17 @@ async function main(): Promise<void> {
     `api server listening on ${status.url} (GET /status, POST /route), routing strategy: ${routingConfig.getStrategyName()}`,
   );
 
+  const mcp: RunningMcpServer = await startMcpServer({
+    tools: createReadTools({ registry, failoverLog }),
+    port: config.mcpPort,
+    host: config.host,
+  });
+  console.log(`mcp server listening on ${mcp.url}`);
+
   const shutdown = (): void => {
     console.log("shutting down...");
     scheduler.stop();
-    Promise.all([status.close(), fleet.stop()])
+    Promise.all([status.close(), mcp.close(), fleet.stop()])
       .then(() => process.exit(0))
       .catch((err: unknown) => {
         console.error(`error during shutdown: ${String(err)}`);
