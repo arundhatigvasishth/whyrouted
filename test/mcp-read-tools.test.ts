@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { createDecisionLog } from "../src/decisions/decision-log.js";
 import { createFailoverLog } from "../src/events/failover-log.js";
 import { Registry } from "../src/registry/registry.js";
 import { startMcpServer, type RunningMcpServer } from "../src/mcp/server.js";
@@ -40,7 +41,29 @@ async function boot() {
     reason: "3 consecutive failed probes",
   });
 
-  running = await startMcpServer({ tools: createReadTools({ registry, failoverLog }), port: 0 });
+  const decisionLog = createDecisionLog();
+  decisionLog.record({
+    id: "dec-1",
+    requestId: "req-1",
+    at: "2026-10-10T11:00:00.000Z",
+    rounds: [
+      {
+        candidates: [
+          { replicaId: "replica-1", inFlight: 0, latencyMs: 5, score: 0, considered: true },
+        ],
+        excluded: [],
+        strategy: "least-loaded",
+        outcome: "picked",
+        pickedReplicaId: "replica-1",
+      },
+    ],
+    chosenReplicaId: "replica-1",
+  });
+
+  running = await startMcpServer({
+    tools: createReadTools({ registry, failoverLog, decisionLog }),
+    port: 0,
+  });
   client = new Client({ name: "test-client", version: "0.0.0" });
   await client.connect(new StreamableHTTPClientTransport(new URL(running.url)));
   return { registry, failoverLog, client };
@@ -52,10 +75,15 @@ function parse(res: Awaited<ReturnType<Client["callTool"]>>): ToolResult<unknown
 }
 
 describe("read tools over MCP", () => {
-  it("registers the state tools and no M5b action tool", async () => {
+  it("registers the read tools and no M5b action tool", async () => {
     const { client } = await boot();
     const names = (await client.listTools()).tools.map((t) => t.name);
-    expect(names).toEqual(expect.arrayContaining(["get_fleet_status", "get_failover_history"]));
+    // query_decisions joins this list when it lands.
+    expect(names.sort()).toEqual([
+      "explain_routing_decision",
+      "get_failover_history",
+      "get_fleet_status",
+    ]);
     for (const action of ACTION_TOOLS) expect(names).not.toContain(action);
   });
 
@@ -90,5 +118,30 @@ describe("read tools over MCP", () => {
     });
     expect(raw.isError).toBe(false);
     expect(parse(raw)).toMatchObject({ ok: false, code: "no_data" });
+  });
+
+  it("explains a recorded decision, and says so for an unknown request id", async () => {
+    const { client } = await boot();
+    const found = parse(
+      await client.callTool({
+        name: "explain_routing_decision",
+        arguments: { request_id: "req-1" },
+      }),
+    );
+    expect(found.ok && found.groundedIn).toMatchObject({
+      source: "decision_log",
+      recordIds: ["dec-1"],
+    });
+
+    const missing = await client.callTool({
+      name: "explain_routing_decision",
+      arguments: { request_id: "nope" },
+    });
+    expect(missing.isError).toBe(false);
+    expect(parse(missing)).toEqual({
+      ok: false,
+      code: "no_data",
+      reason: 'no decision recorded for request id "nope"',
+    });
   });
 });
