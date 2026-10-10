@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Decision } from "../src/decisions/types.js";
 import { createDecisionLog } from "../src/decisions/decision-log.js";
-import {
-  aggregate,
-  createQueryDecisions,
-  type RangeResolver,
-} from "../src/mcp/tools/query-decisions.js";
+import { aggregate, createQueryDecisions } from "../src/mcp/tools/query-decisions.js";
 import { dispatch } from "../src/mcp/types.js";
 
 const REQ = "3f2b8c1e-9a4d-4e6b-8c7a-1d2e3f4a5b6c";
@@ -25,20 +21,13 @@ const served = (n: number, replica: string, latencyMs?: number) =>
 
 const WINDOW = { from: "2026-09-29T15:00:00.000Z", to: "2026-09-29T15:10:00.000Z" };
 
-// Stands in for the shared range parser: every phrase resolves to WINDOW
-// except ones containing "garbage", and "backwards" which comes out inverted.
-const resolveRange: RangeResolver = (phrase) => {
-  if (/garbage/.test(phrase)) return { error: "not a time" };
-  if (/backwards/.test(phrase)) return { from: WINDOW.to, to: WINDOW.from };
-  return WINDOW;
-};
+const IN_RANGE = "between 2026-09-29T15:00:00Z and 2026-09-29T15:10:00Z";
 
 function setup(decisions: Decision[]) {
   const decisionLog = createDecisionLog();
   for (const d of decisions) decisionLog.record(d);
-  const call = dispatch(createQueryDecisions({ decisionLog, resolveRange }), {
-    now: () => new Date("2026-09-29T16:00:00.000Z"),
-  });
+  const now = () => new Date("2026-09-29T16:00:00.000Z");
+  const call = dispatch(createQueryDecisions({ decisionLog, now }), { now });
   return { call, ask: (q: string) => call({ natural_language_query: q }) };
 }
 
@@ -118,7 +107,7 @@ describe("query_decisions: aggregate", () => {
 
   it("answers a p99 question with the whole aggregate and the resolved range", async () => {
     const { ask } = setup(log);
-    const res = await ask("What happened to p99 between 3:00 and 3:10?");
+    const res = await ask(`What happened to p99 ${IN_RANGE}?`);
     expect(res.ok).toBe(true);
     if (!res.ok) return;
     expect(res.data).toEqual({
@@ -133,13 +122,13 @@ describe("query_decisions: aggregate", () => {
   });
 
   it("handles relative ranges and a trailing question mark", async () => {
-    const { ask } = setup(log);
+    const { ask } = setup([decision(1, { at: "2026-09-29T15:55:00.000Z" })]);
     expect((await ask("how many requests failed in the last 10 minutes?")).ok).toBe(true);
   });
 
   it("returns ok with latency null when every request in range failed", async () => {
     const { ask } = setup([decision(1, {}), decision(2, {})]);
-    const res = await ask("failures in the last hour");
+    const res = await ask(`failures ${IN_RANGE}`);
     expect(res.ok).toBe(true);
     if (res.ok) expect((res.data as { latency: unknown }).latency).toBeNull();
   });
@@ -148,7 +137,7 @@ describe("query_decisions: aggregate", () => {
 describe("query_decisions: grounding (O13)", () => {
   it("an empty range is no_data naming the range, never zeros", async () => {
     const { ask } = setup([]);
-    expect(await ask("p99 between 3:00 and 3:10")).toEqual({
+    expect(await ask(`p99 ${IN_RANGE}`)).toEqual({
       ok: false,
       code: "no_data",
       reason: `no decisions recorded between ${WINDOW.from} and ${WINDOW.to}`,
@@ -157,7 +146,7 @@ describe("query_decisions: grounding (O13)", () => {
 
   it("decisions outside the range do not count", async () => {
     const { ask } = setup([decision(1, { at: "2026-09-29T09:00:00.000Z", latencyMs: 5 })]);
-    expect(await ask("p99 between 3:00 and 3:10")).toMatchObject({ ok: false, code: "no_data" });
+    expect(await ask(`p99 ${IN_RANGE}`)).toMatchObject({ ok: false, code: "no_data" });
   });
 
   it("never falls back to all time when the range is missing", async () => {
@@ -181,14 +170,14 @@ describe("query_decisions: grounding (O13)", () => {
 
   it("reports an unreadable range as invalid_input", async () => {
     const { ask } = setup([served(1, "alpha", 10)]);
-    const res = await ask("p99 between garbage and nonsense");
+    const res = await ask("p99 between 25:00 and 26:00");
     expect(res).toMatchObject({ ok: false, code: "invalid_input" });
     expect(res.ok === false && res.reason).toMatch(/^could not read a time range/);
   });
 
   it("reports an inverted range as invalid_input", async () => {
     const { ask } = setup([served(1, "alpha", 10)]);
-    const res = await ask("p99 between backwards and 3:00");
+    const res = await ask("p99 between 2026-09-29T15:10:00Z and 2026-09-29T15:00:00Z");
     expect(res.ok === false && res.reason).toMatch(/^could not read a time range/);
   });
 

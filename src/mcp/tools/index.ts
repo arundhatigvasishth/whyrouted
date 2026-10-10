@@ -16,11 +16,12 @@ import { defineTool, type ToolDefinition } from "../server.js";
 import { createExplainRoutingDecision } from "./explain-routing-decision.js";
 import { createGetFailoverHistoryTool } from "./get-failover-history.js";
 import { createGetFleetStatusTool } from "./get-fleet-status.js";
+import { createQueryDecisions } from "./query-decisions.js";
 
 export interface ReadToolDeps {
   registry: RegistryStore;
   failoverLog: Pick<FailoverLog, "query">;
-  decisionLog: Pick<DecisionLog, "get">;
+  decisionLog: Pick<DecisionLog, "get" | "query">;
 }
 
 export function createReadTools(deps: ReadToolDeps): ToolDefinition[] {
@@ -33,6 +34,15 @@ export function createReadTools(deps: ReadToolDeps): ToolDefinition[] {
         "Explain why one request was routed where it was, from its recorded decision: every round, every candidate's score, and every exclusion. Each line cites the decision fields it came from.",
       inputSchema: { request_id: z.string().describe("The request id to explain") },
       handler: createExplainRoutingDecision({ decisionLog: deps.decisionLog }),
+    }),
+    defineTool({
+      name: "query_decisions",
+      description:
+        'Answer a question from the recorded routing decisions. Supports a point lookup by request id ("why did request <uuid> go where it did") and an aggregate over a time range with p50, p95, p99, latency, count, how many, failed, failures or per replica ("what was p99 between 15:00 and 15:10", "how many requests failed in the last 10 minutes"). Answers only from recorded data and says so when there is none.',
+      inputSchema: {
+        natural_language_query: z.string().describe("The question, in one of the supported shapes"),
+      },
+      handler: createQueryDecisions({ decisionLog: deps.decisionLog }),
     }),
   ];
 }

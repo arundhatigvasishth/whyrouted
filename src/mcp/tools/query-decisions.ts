@@ -9,6 +9,7 @@
  */
 
 import type { Decision, DecisionLog } from "../../decisions/types.js";
+import { findRange } from "../time-range.js";
 import type { ToolHandler } from "../types.js";
 import { explainDecision, type ExplainRoutingDecisionData } from "./explain-routing-decision.js";
 
@@ -37,24 +38,7 @@ export interface AggregateData {
 
 export type QueryDecisionsData = ExplainRoutingDecisionData | AggregateData;
 
-/**
- * Turns a range phrase ("between 3:00 and 3:10", "last 10 minutes") into ISO
- * UTC bounds, or says why it cannot. Supplied by the shared range parser
- * (`src/mcp/time-range.ts`); injected so this tool does not own a second one.
- */
-export type RangeResolver = (
-  phrase: string,
-  now: Date,
-) => { from: string; to: string } | { error: string };
-
 const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
-
-const RANGE_PATTERNS = [
-  /\bbetween\s+\S+\s+and\s+\S+/i,
-  /\bfrom\s+\S+\s+to\s+\S+/i,
-  /\blast\s+(?:\d+\s+)?(?:seconds?|minutes?|hours?|days?)\b/i,
-  /\blast\s+(?:hour|minute|day)\b/i,
-];
 
 const AGGREGATE_WORD = /\b(?:p50|p95|p99|latency|count|how many|failed|failures|per replica)\b/i;
 
@@ -62,14 +46,6 @@ const SUPPORTED =
   'Supported questions: a request id ("why did request <uuid> go where it did"), ' +
   'or an aggregate over a time range using p50, p95, p99, latency, count, how many, failed, failures or per replica ' +
   '("what was p99 between 3:00 and 3:10", "how many requests failed in the last 10 minutes").';
-
-function extractRange(question: string): string | undefined {
-  for (const re of RANGE_PATTERNS) {
-    const m = re.exec(question);
-    if (m !== null) return m[0].replace(/[?.!,;]+$/, "");
-  }
-  return undefined;
-}
 
 /** Nearest-rank percentile of an ascending array: the value at 1-based index ceil(p/100 * n). */
 function nearestRank(sorted: number[], p: number): number {
@@ -109,7 +85,6 @@ export function aggregate(decisions: Decision[], range: { from: string; to: stri
 
 export function createQueryDecisions(deps: {
   decisionLog: Pick<DecisionLog, "get" | "query">;
-  resolveRange: RangeResolver;
   now?: () => Date;
 }): ToolHandler<QueryDecisionsArgs, QueryDecisionsData> {
   const now = deps.now ?? (() => new Date());
@@ -121,9 +96,9 @@ export function createQueryDecisions(deps: {
     }
 
     const ids = [...question.matchAll(UUID)].map((m) => m[0].toLowerCase());
-    const phrase = extractRange(question);
+    const found = findRange(question, now());
 
-    if (ids.length > 1 || (ids.length === 1 && phrase !== undefined)) {
+    if (ids.length > 1 || (ids.length === 1 && found.kind !== "none")) {
       return {
         kind: "invalid_input",
         reason: "ambiguous question: ask about one request id or one time range, not both or several",
@@ -143,17 +118,13 @@ export function createQueryDecisions(deps: {
       };
     }
 
-    if (phrase === undefined || !AGGREGATE_WORD.test(question)) {
+    if (found.kind === "none" || !AGGREGATE_WORD.test(question)) {
       return { kind: "invalid_input", reason: `unsupported question. ${SUPPORTED}` };
     }
-
-    const range = deps.resolveRange(phrase, now());
-    if ("error" in range) {
-      return { kind: "invalid_input", reason: `could not read a time range from "${phrase}": ${range.error}` };
+    if (found.kind === "invalid") {
+      return { kind: "invalid_input", reason: `could not read a time range: ${found.reason}` };
     }
-    if (range.from > range.to) {
-      return { kind: "invalid_input", reason: `could not read a time range from "${phrase}": start is after end` };
-    }
+    const range = found.range;
 
     const decisions = deps.decisionLog.query({ from: range.from, to: range.to });
     if (decisions.length === 0) {
