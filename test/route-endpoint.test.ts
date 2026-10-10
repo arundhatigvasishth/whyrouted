@@ -165,7 +165,7 @@ describe("POST /route", () => {
 
     expect(decisionLog.decisions).toHaveLength(1);
     const [decision] = decisionLog.decisions;
-    expect(decision).toMatchObject({ chosenReplicaId: "replica-2" });
+    expect(decision).toMatchObject({ chosenReplicaId: "replica-2", latencyMs: 14 });
     expect(decision!.rounds).toEqual([
       {
         candidates: [],
@@ -327,6 +327,7 @@ describe("POST /route", () => {
     expect(decisionLog.decisions).toHaveLength(1);
     const [decision] = decisionLog.decisions;
     expect(decision!.chosenReplicaId).toBeNull();
+    expect(decision).not.toHaveProperty("latencyMs");
     expect(decision!.rounds).toHaveLength(3);
     expect(decision!.rounds.map((r) => r.failureReason)).toEqual([
       { kind: "connection" },

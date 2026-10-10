@@ -182,13 +182,14 @@ async function handleRoute(deps: RouteHandlerDeps, payload: unknown, res: Respon
   const exclude: string[] = [];
   const rounds: DecisionRound[] = [];
 
-  const recordDecision = (chosenReplicaId: string | null): void => {
+  const recordDecision = (chosenReplicaId: string | null, latencyMs?: number): void => {
     decisionLog.record({
       id: crypto.randomUUID(),
       requestId,
       at: new Date().toISOString(),
       rounds,
       chosenReplicaId,
+      ...(latencyMs !== undefined && { latencyMs }),
     });
   };
 
@@ -211,7 +212,7 @@ async function handleRoute(deps: RouteHandlerDeps, payload: unknown, res: Respon
     try {
       const { response, latencyMs } = await adapter.sendRequest(decision.replicaId, payload);
       rounds.push(roundFor(decision));
-      recordDecision(decision.replicaId);
+      recordDecision(decision.replicaId, latencyMs);
       res.json({
         replicaId: decision.replicaId,
         strategy: decision.strategy,
