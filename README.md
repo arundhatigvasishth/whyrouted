@@ -307,7 +307,10 @@ the answer, so check it matches what you meant.
 Try it without a client:
 
 ```
-curl -s -X POST http://127.0.0.1:8090/mcp   -H 'content-type: application/json'   -H 'accept: application/json, text/event-stream'   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_fleet_status","arguments":{}}}'
+curl -s -X POST http://127.0.0.1:8090/mcp \
+  -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_fleet_status","arguments":{}}}'
 ```
 
 ### Pointing Claude Desktop at it
