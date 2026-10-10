@@ -174,9 +174,36 @@ its cite (the unit tests in `test/mcp-explain.test.ts` cover the wording).
 Junaid reports separately checking a stdio client reaching the running server
 through `mcp-remote`, the route Claude Desktop uses (all four tools listed,
 `get_fleet_status` returned live data); that is his check, not part of the
-test suite. Claude Desktop itself has not been run against the server, so
-"100% grounded" is established for the tools' output, not for what a model
-says about it.
+test suite. Claude Desktop was then run against the server (2026-10-10, see
+§6.1). That confirms the tools work from the real client, but a model's
+prose is still not measured against the tool output, so "100% grounded" is
+established for the tools' output, not for what a model says about it.
+
+### 6.1 Live demo through Claude Desktop (2026-10-10)
+
+Junaid ran it with the config in the README: `mcp-remote` bridging
+Claude Desktop (stdio) to the in-process server (HTTP). Settings, Developer
+showed `whyrouted` as running, and the tools were available in a new chat.
+
+- **`get_fleet_status`:** asked what the fleet looked like. Claude called the
+  tool and reported four healthy replicas; the figures in its table (in-flight
+  per replica, latency, consecutive successes) matched the tool output, and
+  its "6 requests in flight" was the sum of the four values.
+- **Failover and aggregate:** with `replica-2` killed and ten requests sent
+  through `POST /route` (all ten succeeded, one retried), Junaid asked what
+  failed, which replica was down, how many requests failed, and the p99.
+  Reported as answered correctly from the tools.
+- **Missing data:** a question about a window with no records was reported as
+  answered with "no data", not a guess.
+
+Not covered by the demo: `explain_routing_decision` and the point-lookup form
+of `query_decisions` could not be exercised from the client, because nothing a
+client can reach shows a request id. `POST /route` does not return the
+request id and the decision log has no HTTP surface. The tools work, and
+`test/integration/m5a.test.ts` calls them with a real id, but a person using
+the system cannot get an id to ask about. Recorded as a follow-up: return
+`requestId` in the `POST /route` response body (additive, existing callers
+unaffected).
 
 ## 7. Known deferrals: carry into M5b, do not fix now
 
@@ -207,12 +234,13 @@ says about it.
 - [x] The grounding constraint holds for all four tools at the tool level (§6)
 - [x] The grounding constraint is **measured** against real recorded data
   through an MCP client over HTTP (`test/integration/m5a.test.ts`, §6)
-- [ ] Demoed live through Claude Desktop or `claude.ai`; a model's prose answer
-  checked against the tool output (§6)
+- [x] Demoed live through Claude Desktop (§6.1): fleet status, failover
+  history, the aggregate, and a no-data question. The explain and point-lookup
+  paths could not be reached from the client, see the §6.1 follow-up. A
+  model's prose answer is checked by eye in the demo, not measured.
 - [x] README documents the server and how to point a client at it (PR #55)
 - [x] Unit + integration tests green in CI (270)
-- [x] Both authors have signed off (this document, see §9). The live demo
-  above stays open.
+- [x] Both authors have signed off (this document, see §9)
 
 ## 9. Sign-off
 
@@ -239,9 +267,11 @@ says about it.
   planning, both already in §7: `/mcp` has no authentication, so that must
   be decided before any action tool registers, and `isError` is false for
   `no_data`, which is worth rechecking in a real client.
-- [ ] **Claude Desktop demo not yet run.** The open demo item in §8 depends on
-  it, and so does checking a model's answer against the tool output.
+- [x] **Claude Desktop demo run** (Junaid, 2026-10-10, §6.1). Open follow-up:
+  the request id is not exposed to clients, so the explain path is untested
+  from a real client.
 
-**M5a is functionally complete and merged to `main`, apart from the live
-Claude Desktop demo. Both authors have signed off this review; the demo
-remains open.**
+**M5a is complete and merged to `main`. Both authors have signed off this
+review and the live Claude Desktop demo has been run. One follow-up is open:
+expose the request id from `POST /route` so the explain and point-lookup
+tools can be reached from a client.**
