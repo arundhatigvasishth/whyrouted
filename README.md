@@ -19,9 +19,15 @@ An inference-aware load balancer for LLM serving fleets.
   excluded before scoring, and which replica the client actually got a
   response from, across every retry round the request took.
 
-No MCP tools or dashboard yet. The decision log is queryable in-process
-(`DecisionLog.query`/`.get`), but there's no HTTP surface for it. That's M5a
-(`explain_routing_decision`, `query_decisions`).
+- **M5a:** an MCP server with four read tools: `get_fleet_status`,
+  `get_failover_history`, `explain_routing_decision`, and `query_decisions`.
+  Any MCP client can ask what the fleet looks like, what failed and when, and
+  why a specific request went where it did. Every answer comes from live
+  registry state or recorded log data, and the tools say so when there is
+  nothing to answer from. See [MCP server](#mcp-server).
+
+No action tools (drain, restore, tuning) and no dashboard yet. Those are M5b
+and M6.
 
 ---
 
@@ -51,6 +57,8 @@ This boots the whole system in one process:
 5. Starts the health scheduler, which polls every replica every second.
 6. Builds the routing engine over the registry and the live routing config.
 7. Starts the API server on port `8080` (`GET /status` and `POST /route`).
+8. Starts the MCP server on port `8090` (`POST /mcp`), reading the same
+   registry, failover log, and decision log the API server uses.
 
 Once it's running:
 
@@ -137,6 +145,7 @@ All environment variables are optional; sane defaults are built in.
 | `WR_ROUTING_STRATEGY` | `least-loaded` | `round-robin`, `least-loaded`, or `latency-weighted` |
 | `WR_LOAD_WEIGHT` | `1` | Weight on in-flight count in the latency-weighted score (>= 0) |
 | `WR_LATENCY_WEIGHT` | `1` | Weight on measured latency in the latency-weighted score (>= 0) |
+| `WR_MCP_PORT` | `8090` | Port the MCP server listens on (`POST /mcp`). Must not collide with the status port or the replica range |
 | `WR_MAX_RETRIES` | `2` | Retries `POST /route` makes against the next-best replica on a retryable failure (3 attempts total). `0` disables retry |
 
 ## Fault-injection demo (kill / revive)
@@ -267,6 +276,69 @@ applies. `already_tried` is real and reachable at the engine level, just not
 observable through this particular caller. See
 `docs/architecture/m4.md` §3 for the full trace.
 
+## MCP server
+
+The fleet is exposed as a standard MCP server, so a client can observe and
+question it without a bespoke integration. It runs inside the same process as
+the API server and serves MCP over Streamable HTTP at
+`http://127.0.0.1:8090/mcp` (port set by `WR_MCP_PORT`).
+
+| Tool | What it answers |
+|---|---|
+| `get_fleet_status` | Live health, in-flight load, and latency of every replica. Same data as `GET /status`. |
+| `get_failover_history` | Replica ejections and recoveries in a window. Takes `from` and `to` (ISO 8601, inclusive), or `last` (e.g. `"10 minutes"`), or nothing for the whole log. |
+| `explain_routing_decision` | Takes a `request_id`. Returns the recorded decision and one cited line per round: what each strategy scored, what was excluded and why, and why an earlier round failed. |
+| `query_decisions` | A question in plain words. Either a point lookup (`why did request <uuid> go where it did`) or an aggregate over a time range (`what was p99 between 3:00 and 3:10`, `how many requests failed in the last 10 minutes`). |
+
+Every answer is one JSON object. On success it carries `ok: true`, the data,
+and `groundedIn`: where it came from (`registry`, `failover_log`, or
+`decision_log`), when it was read, and the ids of the records it was built
+from. When the data does not support an answer it says so instead of guessing:
+`code: "no_data"` with a reason naming what was searched (an unknown request
+id, a window with no events), or `code: "invalid_input"` for a question or
+range it cannot read. There is no LLM inside the server, so `query_decisions`
+only understands the question shapes above and tells you the supported ones
+when it gets something else.
+
+Clock times like `3:00` have no date or zone, so they are read as the server's
+local time today. The range that was actually queried is always returned with
+the answer, so check it matches what you meant.
+
+Try it without a client:
+
+```
+curl -s -X POST http://127.0.0.1:8090/mcp   -H 'content-type: application/json'   -H 'accept: application/json, text/event-stream'   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_fleet_status","arguments":{}}}'
+```
+
+### Pointing Claude Desktop at it
+
+Claude Desktop starts local MCP servers as stdio programs, and this server is
+HTTP, so it needs the `mcp-remote` bridge between the two. With `npm run dev`
+running, add this to Claude Desktop's `claude_desktop_config.json` (Settings,
+Developer, Edit Config) and restart it:
+
+```json
+{
+  "mcpServers": {
+    "whyrouted": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "http://127.0.0.1:8090/mcp", "--allow-http"]
+    }
+  }
+}
+```
+
+The four tools should then appear under the tools menu. A good first
+conversation: ask it what the fleet looks like, kill a replica with the
+[fault-injection demo](#fault-injection-demo-kill--revive), send a few
+requests through `POST /route`, then ask it what failed and why a specific
+request was routed the way it was.
+
+What has been checked: the SDK's MCP client over HTTP (the M5a integration
+test), and a stdio client reaching the running server through `mcp-remote`,
+which listed all four tools and returned live fleet data. Claude Desktop
+itself has not been run against it yet.
+
 ## Running the fleet standalone
 
 To run just the simulated replicas without the rest of the system (e.g. for
@@ -313,6 +385,7 @@ src/
   decisions/  decision log (per-request routing rationale, queryable by time or request id, M4)
   events/     failover event log (ejections + recoveries, queryable by time)
   health/     health scheduler (hysteresis-based health state machine + eject)
+  mcp/        MCP server, the grounding envelope every tool answers through, and the four read tools (M5a)
   registry/   in-memory fleet state store (+ Redis stub for later)
   replica/    simulated replica server, fleet launcher, synthetic load
   routing/    routing engine, strategies, live strategy/weight config
