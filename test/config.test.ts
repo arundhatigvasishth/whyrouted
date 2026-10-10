@@ -12,6 +12,7 @@ describe("loadConfig", () => {
       WR_FLEET_SIZE: "2",
       WR_BASE_PORT: "9001",
       WR_STATUS_PORT: "9999",
+      WR_MCP_PORT: "9998",
       WR_HEALTH_INTERVAL_MS: "2000",
       WR_HEALTH_TIMEOUT_MS: "750",
       WR_UNHEALTHY_THRESHOLD: "5",
@@ -26,6 +27,7 @@ describe("loadConfig", () => {
       fleetSize: 2,
       basePort: 9001,
       statusPort: 9999,
+      mcpPort: 9998,
       healthIntervalMs: 2000,
       healthTimeoutMs: 750,
       unhealthyThreshold: 5,
@@ -34,6 +36,21 @@ describe("loadConfig", () => {
       scoringWeights: { loadWeight: 0.7, latencyWeight: 0.3 },
       maxRetries: 4,
     });
+  });
+
+  it("defaults WR_MCP_PORT to 8090", () => {
+    expect(loadConfig({}).mcpPort).toBe(8090);
+  });
+
+  it("rejects an MCP port that collides with the status port or the replica range", () => {
+    expect(() => loadConfig({ WR_MCP_PORT: "8080" })).toThrow(/collides with WR_STATUS_PORT/);
+    expect(() => loadConfig({ WR_MCP_PORT: "8002" })).toThrow(
+      /collides with the replica port range/,
+    );
+  });
+
+  it("rejects an out-of-range WR_MCP_PORT", () => {
+    expect(() => loadConfig({ WR_MCP_PORT: "70000" })).toThrow(/WR_MCP_PORT must be between/);
   });
 
   it("defaults WR_MAX_RETRIES to 2", () => {
