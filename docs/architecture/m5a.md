@@ -1,6 +1,6 @@
 # M5a Architecture Review
 
-**Reviewers:** Arundhati Vasishth (draft), Junaid Pathan (pending)
+**Reviewers:** Arundhati Vasishth (draft), Junaid Pathan (reviewed 2026-10-10)
 **Date:** 2026-10-10
 **Purpose:** Walk the MCP read-tool seam before M5b. Confirm the four read
 tools answer only from live or recorded data, that the grounding rule is
@@ -211,8 +211,8 @@ says about it.
   checked against the tool output (§6)
 - [x] README documents the server and how to point a client at it (PR #55)
 - [x] Unit + integration tests green in CI (270)
-- [ ] Both authors have signed off (this document; Junaid's review pending,
-  see §9)
+- [x] Both authors have signed off (this document, see §9). The live demo
+  above stays open.
 
 ## 9. Sign-off
 
@@ -228,12 +228,20 @@ says about it.
   range parser, `main.ts` wiring: built by Junaid (PRs #48, #49, #50, #51);
   wiring PR #51 re-run locally (typecheck and full suite) before merge
   (Arundhati)
-- [ ] **Junaid's review of this document is pending.** Drafted solo, flagged
-  plainly rather than claimed as a completed mutual sign-off, consistent with
-  how the M3 and M4 reviews handled the same situation.
+- [x] **Junaid's review of this document** (2026-10-10). Checked against the
+  code and the PRs rather than taken on trust: the §4.4 port collision is
+  real and the fix holds (the m1 and m2 ports each get their own
+  `statusPort + 5`, none inside a replica range or another test's range);
+  the §5 grep and the registered tool list match; the §6 account of what is
+  and is not measured is accurate, including that nothing here measures a
+  model's prose answer; and the full suite passes on this branch (270 tests,
+  typecheck and prettier clean). Two additions I would carry into M5b
+  planning, both already in §7: `/mcp` has no authentication, so that must
+  be decided before any action tool registers, and `isError` is false for
+  `no_data`, which is worth rechecking in a real client.
 - [ ] **Claude Desktop demo not yet run.** The open demo item in §8 depends on
   it, and so does checking a model's answer against the tool output.
 
 **M5a is functionally complete and merged to `main`, apart from the live
-Claude Desktop demo. Closed pending Junaid's read of this document and that
-demo.**
+Claude Desktop demo. Both authors have signed off this review; the demo
+remains open.**
