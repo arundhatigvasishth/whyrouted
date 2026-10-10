@@ -28,6 +28,8 @@ export interface Config {
   basePort: number;
   /** Port `GET /status` listens on. */
   statusPort: number;
+  /** Port the MCP server listens on (Streamable HTTP, `POST /mcp`). Same process as the API server, see docs/decisions.md 2026-09-29. */
+  mcpPort: number;
   /** How often the health scheduler polls each replica, in ms. */
   healthIntervalMs: number;
   /** Per-probe timeout, in ms. Must be `< healthIntervalMs`. */
@@ -49,6 +51,7 @@ export const DEFAULT_CONFIG: Config = {
   fleetSize: 4,
   basePort: 8001,
   statusPort: 8080,
+  mcpPort: 8090,
   healthIntervalMs: 500,
   healthTimeoutMs: 200,
   unhealthyThreshold: 3,
@@ -102,6 +105,7 @@ export function loadConfig(env: Env = process.env): Config {
     fleetSize: readInt(env, "WR_FLEET_SIZE", DEFAULT_CONFIG.fleetSize),
     basePort: readInt(env, "WR_BASE_PORT", DEFAULT_CONFIG.basePort),
     statusPort: readInt(env, "WR_STATUS_PORT", DEFAULT_CONFIG.statusPort),
+    mcpPort: readInt(env, "WR_MCP_PORT", DEFAULT_CONFIG.mcpPort),
     healthIntervalMs: readInt(env, "WR_HEALTH_INTERVAL_MS", DEFAULT_CONFIG.healthIntervalMs),
     healthTimeoutMs: readInt(env, "WR_HEALTH_TIMEOUT_MS", DEFAULT_CONFIG.healthTimeoutMs),
     unhealthyThreshold: readInt(env, "WR_UNHEALTHY_THRESHOLD", DEFAULT_CONFIG.unhealthyThreshold),
@@ -129,6 +133,7 @@ function validate(c: Config): void {
   for (const [name, port] of [
     ["WR_BASE_PORT", c.basePort],
     ["WR_STATUS_PORT", c.statusPort],
+    ["WR_MCP_PORT", c.mcpPort],
   ] as const) {
     if (port < 1 || port > 65535) errors.push(`${name} must be between 1 and 65535`);
   }
@@ -141,6 +146,14 @@ function validate(c: Config): void {
     errors.push(
       `WR_STATUS_PORT ${c.statusPort} collides with the replica port range ${c.basePort}-${topPort}`,
     );
+  }
+  if (c.mcpPort >= c.basePort && c.mcpPort <= topPort) {
+    errors.push(
+      `WR_MCP_PORT ${c.mcpPort} collides with the replica port range ${c.basePort}-${topPort}`,
+    );
+  }
+  if (c.mcpPort === c.statusPort) {
+    errors.push(`WR_MCP_PORT ${c.mcpPort} collides with WR_STATUS_PORT`);
   }
 
   if (c.healthIntervalMs < 1) errors.push("WR_HEALTH_INTERVAL_MS must be >= 1");
