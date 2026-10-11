@@ -9,9 +9,9 @@
 
 import type { RegistryStore } from "../../registry/types.js";
 import type { RegistrySnapshot } from "../../types.js";
-import { defineTool, type ToolDefinition } from "../server.js";
+import { defineTool, type ReadToolDefinition } from "../server.js";
 
-export function createGetFleetStatusTool(store: RegistryStore): ToolDefinition {
+export function createGetFleetStatusTool(store: RegistryStore): ReadToolDefinition {
   return defineTool({
     name: "get_fleet_status",
     description:
