@@ -12,7 +12,7 @@ import { z } from "zod";
 import type { DecisionLog } from "../../decisions/types.js";
 import type { FailoverLog } from "../../events/types.js";
 import type { RegistryStore } from "../../registry/types.js";
-import { defineTool, type ToolDefinition } from "../server.js";
+import { defineTool, type ReadToolDefinition } from "../server.js";
 import { createExplainRoutingDecision } from "./explain-routing-decision.js";
 import { createGetFailoverHistoryTool } from "./get-failover-history.js";
 import { createGetFleetStatusTool } from "./get-fleet-status.js";
@@ -24,7 +24,7 @@ export interface ReadToolDeps {
   decisionLog: Pick<DecisionLog, "get" | "query">;
 }
 
-export function createReadTools(deps: ReadToolDeps): ToolDefinition[] {
+export function createReadTools(deps: ReadToolDeps): ReadToolDefinition[] {
   return [
     createGetFleetStatusTool(deps.registry),
     createGetFailoverHistoryTool(deps.failoverLog),

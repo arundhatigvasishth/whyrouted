@@ -17,7 +17,7 @@
 
 import { z } from "zod";
 import type { FailoverEvent, FailoverLog } from "../../events/types.js";
-import { defineTool, type ToolDefinition } from "../server.js";
+import { defineTool, type ReadToolDefinition } from "../server.js";
 import { normalizeIso, resolveLast } from "../time-range.js";
 
 export interface FailoverHistoryData {
@@ -46,7 +46,7 @@ function describe(range: Bounds): string {
 export function createGetFailoverHistoryTool(
   log: Pick<FailoverLog, "query">,
   opts: FailoverHistoryOptions = {},
-): ToolDefinition {
+): ReadToolDefinition {
   const now = opts.now ?? (() => new Date());
 
   return defineTool({
