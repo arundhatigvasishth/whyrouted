@@ -317,13 +317,16 @@ token, and the Claude Desktop config. Only the demo and the final sign-off remai
 
 - [x] Shared contract P1 to P4: agreed in
   `docs/milestones/m5b/shared-contract.md` (both, 2026-10-11)
-- [ ] Drained state, engine pre-filter, explain wording, `drain_replica`,
+- [x] Drained state, engine pre-filter, explain wording, `drain_replica`,
   `restore_replica`, the `main.ts` wiring, and the integration test: built and
-  self-reviewed (Arundhati, PRs #61, #62, #65, #67)
-- [ ] Action envelope, auth, `set_routing_strategy`, `set_scoring_weights`,
+  self-reviewed (Arundhati, PRs #61, #62, #65, #67). Junaid reviewed #65
+  (approved) and, per his note below, not #61, #62, or #67, so those three
+  were checked only by CI and by the tests they add.
+- [x] Action envelope, auth, `set_routing_strategy`, `set_scoring_weights`,
   `simulate_failure` and the fault injector: built by Junaid (PRs #60, #63,
   #64, #66); read and checked against the contract by Arundhati, #63 re-run
-  locally after the merge in 4.9
+  locally after the merge in 4.9. The full suite (371 tests at that point)
+  passed with the merged auth branch.
 - [x] **Junaid's review of this document** (2026-10-11). Checked against
   `main` rather than taken on trust: the full suite passes (391 tests) and
   the M5b integration test passed on two more runs; CI is green on #65, #67,
@@ -338,5 +341,6 @@ token, and the Claude Desktop config. Only the demo and the final sign-off remai
 - [ ] **Claude Desktop demo run** (section 6.1)
 
 **M5b is complete on `main` except the Claude Desktop demo (6.1). Both
-authors have reviewed this document. The demo and Arundhati's own boxes are
-the open items.**
+authors have reviewed this document and ticked their own boxes. The demo is
+the one open item, and the task split's definition of done is not met until it
+is run.**
