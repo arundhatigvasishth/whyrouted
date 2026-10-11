@@ -1,9 +1,8 @@
 # M5b Shared Contract (P1 to P4)
 
-**Status:** drafted. Arundhati drafted P1 and P4; Junaid drafted P2 and P3
-and reviews P1 and P4. Each half still needs the other's review before the
-boxes at the bottom are checked. P5 onward build against this doc once both
-halves are signed off.
+**Status:** fully agreed (2026-10-11). Arundhati drafted P1 and P4 and
+Junaid drafted P2 and P3; each reviewed the other's half. P5 onward build
+against this doc as written.
 **Covers:** how a drained replica is represented (P1), `/mcp` authentication
 (P2), the action result envelope (P3), and `simulate_failure` semantics (P4).
 See [`task-split.md`](task-split.md) for why these four come first.
