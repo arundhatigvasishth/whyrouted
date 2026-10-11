@@ -160,6 +160,7 @@ describe("POST /route", () => {
       response: { tokens: 3 },
       latencyMs: 14,
       attempts: [],
+      requestId: expect.any(String),
     });
     expect(adapter.calls).toEqual([{ replicaId: "replica-2", payload: { prompt: "hi" } }]);
 
@@ -205,7 +206,10 @@ describe("POST /route", () => {
 
     const res = await postRoute(server.url, { payload: {} });
     expect(res.status).toBe(503);
-    expect(await res.json()).toEqual({ error: "no_healthy_replicas" });
+    expect(await res.json()).toEqual({
+      error: "no_healthy_replicas",
+      requestId: expect.any(String),
+    });
     expect(adapter.calls).toEqual([]);
 
     expect(decisionLog.decisions).toHaveLength(1);
@@ -226,7 +230,10 @@ describe("POST /route", () => {
 
     const res = await postRoute(server.url, { payload: {} });
     expect(res.status).toBe(503);
-    expect(await res.json()).toEqual({ error: "no_routable_replica" });
+    expect(await res.json()).toEqual({
+      error: "no_routable_replica",
+      requestId: expect.any(String),
+    });
   });
 
   it("retries against the next-best replica on a retryable failure, ejects and records it", async () => {
@@ -255,6 +262,7 @@ describe("POST /route", () => {
       response: { ok: true },
       latencyMs: 5,
       attempts: [{ replicaId: "replica-1", kind: "timeout" }],
+      requestId: expect.any(String),
     });
 
     expect(scheduler.ejected).toEqual([
@@ -320,6 +328,7 @@ describe("POST /route", () => {
         { replicaId: "replica-2", kind: "http_status", status: 503 },
         { replicaId: "replica-3", kind: "timeout" },
       ],
+      requestId: expect.any(String),
     });
     expect(scheduler.ejected).toHaveLength(3);
     expect(failoverLog.events).toHaveLength(3);
@@ -359,6 +368,7 @@ describe("POST /route", () => {
       replicaId: "replica-1",
       detail: "replica-1 returned 400",
       attempts: [],
+      requestId: expect.any(String),
     });
     expect(scheduler.ejected).toEqual([]);
     expect(failoverLog.events).toEqual([]);
@@ -423,5 +433,93 @@ describe("createStatusApp wiring", () => {
         engine: fakeEngine([fail("no_healthy_replicas")]),
       }),
     ).toThrow(/engine, an adapter, a scheduler, a failoverLog, and a decisionLog/);
+  });
+});
+
+describe("POST /route request id", () => {
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+  async function requestIdOf(res: Response): Promise<string> {
+    const body = (await res.json()) as { requestId?: unknown };
+    expect(typeof body.requestId).toBe("string");
+    expect(body.requestId).toMatch(UUID);
+    return body.requestId as string;
+  }
+
+  it("returns the id the decision is recorded under, on a success", async () => {
+    const decisionLog = fakeDecisionLog();
+    const server = await start({
+      engine: fakeEngine([ok("replica-1", "least-loaded")]),
+      adapter: fakeAdapter([() => Promise.resolve({ response: {}, latencyMs: 1 })]),
+      scheduler: fakeScheduler(),
+      failoverLog: fakeFailoverLog(),
+      decisionLog,
+    });
+    const id = await requestIdOf(await postRoute(server.url, { payload: {} }));
+    expect(decisionLog.decisions).toHaveLength(1);
+    expect(decisionLog.decisions[0]!.requestId).toBe(id);
+  });
+
+  it("returns it on every failure path too, so a failed request can be explained", async () => {
+    const cases: Array<{
+      name: string;
+      engine: RoutingEngine;
+      adapter: ReplicaAdapter;
+      status: number;
+    }> = [
+      {
+        name: "fleet down",
+        engine: fakeEngine([fail("no_healthy_replicas")]),
+        adapter: fakeAdapter([() => Promise.reject(new Error("unused"))]),
+        status: 503,
+      },
+      {
+        name: "retries exhausted",
+        engine: fakeEngine([ok("replica-1", "least-loaded"), ok("replica-2", "least-loaded")]),
+        adapter: fakeAdapter([
+          () => Promise.reject(new ReplicaRequestError("timeout", "slow")),
+          () => Promise.reject(new ReplicaRequestError("timeout", "slow")),
+        ]),
+        status: 503,
+      },
+      {
+        name: "non-retryable 4xx",
+        engine: fakeEngine([ok("replica-1", "least-loaded")]),
+        adapter: fakeAdapter([
+          () => Promise.reject(new ReplicaRequestError("http_status", "bad", 400)),
+        ]),
+        status: 502,
+      },
+    ];
+    for (const c of cases) {
+      const decisionLog = fakeDecisionLog();
+      const server = await start({
+        engine: c.engine,
+        adapter: c.adapter,
+        scheduler: fakeScheduler(),
+        failoverLog: fakeFailoverLog(),
+        decisionLog,
+        maxRetries: 1,
+      });
+      const res = await postRoute(server.url, { payload: {} });
+      expect(res.status, c.name).toBe(c.status);
+      const id = await requestIdOf(res);
+      expect(decisionLog.decisions[0]!.requestId, c.name).toBe(id);
+      await running?.close();
+      running = undefined;
+    }
+  });
+
+  it("gives every request its own id", async () => {
+    const server = await start({
+      engine: fakeEngine([ok("replica-1", "least-loaded")]),
+      adapter: fakeAdapter([() => Promise.resolve({ response: {}, latencyMs: 1 })]),
+      scheduler: fakeScheduler(),
+      failoverLog: fakeFailoverLog(),
+      decisionLog: fakeDecisionLog(),
+    });
+    const a = await requestIdOf(await postRoute(server.url, { payload: {} }));
+    const b = await requestIdOf(await postRoute(server.url, { payload: {} }));
+    expect(a).not.toBe(b);
   });
 });
