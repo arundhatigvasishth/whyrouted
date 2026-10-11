@@ -419,7 +419,11 @@ means "check the token".
 Try it without a client:
 
 ```
-curl -s -X POST http://127.0.0.1:8090/mcp   -H "authorization: Bearer $WR_MCP_TOKEN"   -H 'content-type: application/json'   -H 'accept: application/json, text/event-stream'   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"drain_replica","arguments":{"replica_id":"replica-2"}}}'
+curl -s -X POST http://127.0.0.1:8090/mcp \
+  -H "authorization: Bearer $WR_MCP_TOKEN" \
+  -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"drain_replica","arguments":{"replica_id":"replica-2"}}}'
 ```
 
 ## Running the fleet standalone
