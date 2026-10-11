@@ -39,9 +39,23 @@ export interface ReplicaRuntime {
   lastCheckedAt: string | null;
 }
 
+/**
+ * Operator intent for a replica, separate from its health. `drained` means an
+ * operator took it out of rotation: the engine routes no new traffic to it, and
+ * nothing the health scheduler does can undo that. See
+ * docs/milestones/m5b/shared-contract.md, P1.
+ */
+export type ReplicaAdmin = "active" | "drained";
+
 /** A replica plus its live runtime — the unit the registry stores and `/status` returns. */
 export interface ReplicaState extends Replica {
   runtime: ReplicaRuntime;
+  /**
+   * Set only through the registry's `setAdmin`. Kept beside `runtime`, not in
+   * it, so the scheduler's `updateRuntime(Partial<ReplicaRuntime>)` cannot
+   * reach it.
+   */
+  admin: ReplicaAdmin;
 }
 
 /** Full point-in-time view of the fleet. This IS the `GET /status` response body. */

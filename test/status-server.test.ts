@@ -57,6 +57,7 @@ describe("GET /status", () => {
     expect(body.replicas[0]).toEqual({
       id: "replica-1",
       url: "http://127.0.0.1:8001",
+      admin: "active",
       runtime: {
         health: "healthy",
         inFlight: 3,
@@ -69,6 +70,7 @@ describe("GET /status", () => {
     expect(body.replicas[1]).toEqual({
       id: "replica-2",
       url: "http://127.0.0.1:8002",
+      admin: "active",
       runtime: initialRuntime(),
     });
   });

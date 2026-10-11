@@ -7,6 +7,7 @@ describe("RedisRegistry (stub)", () => {
     expect(() => reg.register({ id: "replica-1", url: "http://x" })).toThrow(/not implemented/i);
     expect(() => reg.updateRuntime("replica-1", { inFlight: 1 })).toThrow(/not implemented/i);
     expect(() => reg.setHealth("replica-1", "healthy")).toThrow(/not implemented/i);
+    expect(() => reg.setAdmin("replica-1", "drained")).toThrow(/not implemented/i);
     expect(() => reg.getSnapshot()).toThrow(/not implemented/i);
   });
 });
