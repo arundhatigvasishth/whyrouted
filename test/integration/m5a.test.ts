@@ -150,7 +150,7 @@ describe("M5a end to end", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ payload: { prompt: "ping" } }),
       });
-      return (await res.json()) as { replicaId: string; latencyMs: number };
+      return (await res.json()) as { replicaId: string; latencyMs: number; requestId: string };
     };
 
     // Round-robin: replica-1, replica-2, then the cursor sits on replica-3.
@@ -208,6 +208,8 @@ describe("M5a end to end", () => {
     // explain_routing_decision tells the whole retry story for the retried request.
     const decisions = decisionLog.query({});
     expect(decisions).toHaveLength(5);
+    // The id a client gets back from POST /route is the one the decision is recorded under.
+    expect(decisions.map((d) => d.requestId)).toEqual(responses.map((r) => r.requestId));
     const retried = decisions.find((d) => d.rounds.length === 2)!;
     expect(retried).toBeDefined();
     const explained = await call<ExplainRoutingDecisionData>("explain_routing_decision", {

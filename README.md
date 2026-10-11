@@ -221,9 +221,15 @@ tries before the one that worked (`[]` on a first-try success):
   "strategy": "least-loaded",
   "response": {},
   "latencyMs": 14,
-  "attempts": [{ "replicaId": "replica-1", "kind": "timeout" }]
+  "attempts": [{ "replicaId": "replica-1", "kind": "timeout" }],
+  "requestId": "3f2b8c1e-9a4d-4e6b-8c7a-1d2e3f4a5b6c"
 }
 ```
+
+Every `/route` response, success or failure, also carries `requestId`: the id
+the request's routing decision is recorded under. Pass it to the MCP tools
+`explain_routing_decision` or `query_decisions` to ask why that request went
+where it did (see [MCP server](#mcp-server)).
 
 **Try it**: with `npm run dev` running, fail a replica mid-request and watch
 `/route` route around it without ever failing to the client:

@@ -174,6 +174,11 @@ function roundFor(decision: RouteResult): DecisionRound {
  * `Decision`. `chosenReplicaId` is set only on a `200`; every failure path,
  * including a non-retryable `502` where a replica was picked but never
  * returned a usable response, records `null` (docs/milestones/m4/shared-contract.md, N4).
+ *
+ * Every response body, success or failure, also carries `requestId`: the id
+ * the `Decision` is recorded under, so a caller can ask
+ * `explain_routing_decision` why this request went where it did (M5a). Additive:
+ * no existing field changed.
  */
 async function handleRoute(deps: RouteHandlerDeps, payload: unknown, res: Response): Promise<void> {
   const { engine, adapter, scheduler, failoverLog, decisionLog, maxRetries } = deps;
@@ -202,9 +207,9 @@ async function handleRoute(deps: RouteHandlerDeps, payload: unknown, res: Respon
         // no_healthy_replicas and no_routable_replica pass straight through on
         // a first attempt, so the caller can tell "fleet is down" from
         // "nothing routable yet".
-        res.status(503).json({ error: decision.error });
+        res.status(503).json({ error: decision.error, requestId });
       } else {
-        res.status(503).json({ error: "all_replicas_failed", attempts });
+        res.status(503).json({ error: "all_replicas_failed", attempts, requestId });
       }
       return;
     }
@@ -219,6 +224,7 @@ async function handleRoute(deps: RouteHandlerDeps, payload: unknown, res: Respon
         response,
         latencyMs,
         attempts,
+        requestId,
       });
       return;
     } catch (err) {
@@ -243,7 +249,7 @@ async function handleRoute(deps: RouteHandlerDeps, payload: unknown, res: Respon
 
         if (attempts.length > maxRetries) {
           recordDecision(null);
-          res.status(503).json({ error: "all_replicas_failed", attempts });
+          res.status(503).json({ error: "all_replicas_failed", attempts, requestId });
           return;
         }
         continue;
@@ -262,6 +268,7 @@ async function handleRoute(deps: RouteHandlerDeps, payload: unknown, res: Respon
         replicaId: decision.replicaId,
         detail: err instanceof Error ? err.message : String(err),
         attempts,
+        requestId,
       });
       return;
     }
