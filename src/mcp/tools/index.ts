@@ -16,7 +16,17 @@ import type { DecisionLog } from "../../decisions/types.js";
 import type { FailoverLog } from "../../events/types.js";
 import type { RegistryStore } from "../../registry/types.js";
 import type { RoutingConfig } from "../../routing/types.js";
-import { defineTool, type ActionToolDefinition, type ReadToolDefinition } from "../server.js";
+import type { FaultInjector } from "../../replica/fault-injector.js";
+import {
+  defineTool,
+  type ActionToolDefinition,
+  type ReadToolDefinition,
+  type ToolDefinition,
+} from "../server.js";
+import { actionToolsAllowed, authBanner } from "../auth.js";
+import { createDrainReplicaTool } from "./drain-replica.js";
+import { createRestoreReplicaTool } from "./restore-replica.js";
+import { createSimulateFailureTool } from "./simulate-failure.js";
 import { createExplainRoutingDecision } from "./explain-routing-decision.js";
 import { createGetFailoverHistoryTool } from "./get-failover-history.js";
 import { createGetFleetStatusTool } from "./get-fleet-status.js";
@@ -54,17 +64,47 @@ export function createReadTools(deps: ReadToolDeps): ReadToolDefinition[] {
 }
 
 export interface ActionToolDeps {
+  registry: RegistryStore;
   routingConfig: RoutingConfig;
+  /** Absent for a fleet that is not simulated; `simulate_failure` then returns `unsupported`. */
+  injector?: FaultInjector;
 }
 
 /**
  * The action tools built so far. Each one closes over the live store it
  * changes, the same instance the router reads, so a change applies to the next
- * request. The set grows to exactly five as the M5b tools land.
+ * request. Exactly five, pinned by a test.
  */
 export function createActionTools(deps: ActionToolDeps): ActionToolDefinition[] {
   return [
+    createDrainReplicaTool(deps.registry),
+    createRestoreReplicaTool(deps.registry),
+    createSimulateFailureTool({ registry: deps.registry, injector: deps.injector }),
     createSetRoutingStrategyTool(deps.routingConfig),
     createSetScoringWeightsTool(deps.routingConfig),
   ];
+}
+
+export interface McpToolDeps extends ReadToolDeps, ActionToolDeps {
+  /** The host the MCP server binds to. */
+  host: string;
+  /** `WR_MCP_TOKEN`, when set. */
+  token?: string;
+}
+
+/**
+ * Every tool the server should register for this bind and token, plus the
+ * startup lines to log. The four read tools are always there. The five action
+ * tools are added only when `actionToolsAllowed` says so, so on a non-loopback
+ * bind with no token they are absent from `tools/list` rather than present and
+ * rejecting (docs/milestones/m5b/shared-contract.md, P2).
+ */
+export function createMcpTools(deps: McpToolDeps): { tools: ToolDefinition[]; notices: string[] } {
+  const policy = actionToolsAllowed({ host: deps.host, token: deps.token });
+  const notices = authBanner({ host: deps.host, token: deps.token });
+  if (!policy.allowed) {
+    notices.push(policy.reason);
+    return { tools: createReadTools(deps), notices };
+  }
+  return { tools: [...createReadTools(deps), ...createActionTools(deps)], notices };
 }
