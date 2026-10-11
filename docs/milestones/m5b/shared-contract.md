@@ -253,8 +253,10 @@ export function actionToolsAllowed(opts: {
   compared with `crypto.timingSafeEqual`. Hashing first means the compare
   never throws on a length mismatch and does not leak the token's length.
 - **Never logged.** Not in the startup banner, not in errors, not in the 401
-  body. The banner says `auth: token required` or `auth: none (loopback
-  only)`, nothing more.
+  body. The banner says `auth: token required`, or `auth: none (loopback
+  only)`, and nothing else about the token. When a token is set on a
+  non-loopback bind the banner adds `plain http: token is readable on the
+  network`, because "token required" alone reads as safer than it is.
 - **Wiring:** `startMcpServer` takes an optional `token`. When given, the
   middleware is installed first in `createMcpApp`. `main.ts` calls
   `actionToolsAllowed` and registers the action tools only when it returns
@@ -470,13 +472,9 @@ Under P3's envelope, for `simulate_failure`:
 - `after` is the `FaultState` the replica reported, read back from the
   replica rather than assumed from the mode. `before` is not available
   without a second call, so it is omitted for this tool rather than guessed.
-- `changed` is `false` when the reported state equals what the replica
-  already had, which needs one read before the write. If the replica has no
-  state-read endpoint, `revive` on a healthy replica still reports
-  honestly from the admin response. **Resolved in P3:** `before` is
-  optional on this one tool, and no `GET /admin/state` is added. Adding a
-  replica endpoint would widen the M1 HTTP surface for a field no client
-  needs. `changed` is `null` for this tool, not a guess.
+- `changed` is `null` for this tool, not a guess. **Resolved in P3:** `before`
+  is optional on this one tool, and no `GET /admin/state` is added, because a
+  replica endpoint would widen the M1 HTTP surface for a field no client needs.
 - The result does **not** claim the replica is now unhealthy. A kill takes
   about 1.5 seconds to show in the registry. The result says the fault was
   injected and points at `get_fleet_status` for the health effect. This is
@@ -538,15 +536,15 @@ Arundhati's items (Junaid reviewed 2026-10-11):
 - [x] P4: open question on optional `before`: answered in P3, optional on this
       tool only, no new replica endpoint.
 
-Junaid's items (Arundhati to review):
-- [ ] P2: bearer token on the whole endpoint, loopback test, action tools
+Junaid's items (Arundhati reviewed 2026-10-11):
+- [x] P2: bearer token on the whole endpoint, loopback test, action tools
       unregistered on a non-loopback bind with no token, 401 shape, 16
       character minimum, constant-time compare. The `mcp-remote` header check
       is done and recorded in P2.
-- [ ] P3: `ActionResult` and `performAction`, derived `changed` (`null` when
+- [x] P3: `ActionResult` and `performAction`, derived `changed` (`null` when
       there is no `before`), `before` required for four tools and optional for
       one, `unauthorized` dropped, `isError` table, `kind` on
       `ToolDefinition`.
-- [ ] P3: the weights correction. Only `latency-weighted` reads the scoring
+- [x] P3: the weights correction. Only `latency-weighted` reads the scoring
       weights, so `set_scoring_weights` adds a note unless it is active.
 
