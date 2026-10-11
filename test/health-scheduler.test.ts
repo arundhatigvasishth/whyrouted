@@ -52,6 +52,28 @@ const runPolls = async (s: HealthScheduler, times: number) => {
 const healthOf = (registry: Registry, id: string) =>
   registry.getSnapshot().replicas.find((r) => r.id === id)!.runtime.health;
 
+describe("HealthScheduler and operator drain", () => {
+  it("does not change a drained replica's admin state across health transitions", async () => {
+    const { registry, scheduler } = setup({
+      "replica-1": [OK, OK, DOWN, DOWN, DOWN, OK, OK],
+    });
+    registry.setAdmin("replica-1", "drained");
+    const adminOf = () => registry.getSnapshot().replicas[0]!.admin;
+
+    await runPolls(scheduler, 2);
+    expect(healthOf(registry, "replica-1")).toBe("healthy");
+    expect(adminOf()).toBe("drained");
+
+    await runPolls(scheduler, 3);
+    expect(healthOf(registry, "replica-1")).toBe("unhealthy");
+    expect(adminOf()).toBe("drained");
+
+    await runPolls(scheduler, 2);
+    expect(healthOf(registry, "replica-1")).toBe("healthy");
+    expect(adminOf()).toBe("drained");
+  });
+});
+
 describe("HealthScheduler hysteresis", () => {
   it("moves unknown → healthy after M consecutive successes", async () => {
     const { registry, scheduler, transitions } = setup({ "replica-1": [OK] }, { m: 2 });

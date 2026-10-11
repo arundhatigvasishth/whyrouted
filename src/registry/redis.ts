@@ -10,7 +10,13 @@
  * uses the in-memory `Registry`.
  */
 
-import type { Replica, ReplicaHealth, ReplicaRuntime, RegistrySnapshot } from "../types.js";
+import type {
+  Replica,
+  ReplicaAdmin,
+  ReplicaHealth,
+  ReplicaRuntime,
+  RegistrySnapshot,
+} from "../types.js";
 import type { RegistryStore } from "./types.js";
 
 const NOT_IMPLEMENTED =
@@ -26,6 +32,10 @@ export class RedisRegistry implements RegistryStore {
   }
 
   setHealth(_id: string, _health: ReplicaHealth): void {
+    throw new Error(NOT_IMPLEMENTED);
+  }
+
+  setAdmin(_id: string, _admin: ReplicaAdmin): void {
     throw new Error(NOT_IMPLEMENTED);
   }
 

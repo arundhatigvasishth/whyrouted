@@ -12,6 +12,7 @@
 
 import type {
   Replica,
+  ReplicaAdmin,
   ReplicaHealth,
   ReplicaRuntime,
   ReplicaState,
@@ -36,6 +37,7 @@ export class Registry implements RegistryStore {
       id: replica.id,
       url: replica.url,
       runtime: initialRuntime(),
+      admin: "active",
     });
   }
 
@@ -58,6 +60,14 @@ export class Registry implements RegistryStore {
   }
 
   /**
+   * Set operator intent. Separate from health on purpose: the scheduler never
+   * calls this, so a drain survives every probe. Throws on an unknown id.
+   */
+  setAdmin(id: string, admin: ReplicaAdmin): void {
+    this.require(id).admin = admin;
+  }
+
+  /**
    * Point-in-time view of the whole fleet, in registration order. Every object
    * is a fresh copy, so callers cannot mutate registry state by holding the
    * result. This IS the `GET /status` response body.
@@ -69,6 +79,7 @@ export class Registry implements RegistryStore {
         id: state.id,
         url: state.url,
         runtime: { ...state.runtime },
+        admin: state.admin,
       })),
     };
   }
