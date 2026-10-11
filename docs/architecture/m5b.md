@@ -2,8 +2,8 @@
 
 **Reviewers:** Arundhati Vasishth (draft), Junaid Pathan (reviewed 2026-10-11)
 **Date:** 2026-10-11
-**Status:** reviewed by both authors. One item is open: the live Claude
-Desktop demo (section 6.1).
+**Status:** reviewed by both authors, demo run (section 6.1). Open follow-up:
+the token path through Claude Desktop is untested.
 **Purpose:** Walk the MCP action-tool seam before M6. Confirm the five action
 tools change only what they say they changed, that no action is reachable
 without the auth gate, that drain is operator intent held apart from health,
@@ -241,28 +241,57 @@ that `explain_routing_decision` words it as an operator action, never as
 its own prose. As in M5a, the tools' output is measured; a model's paraphrase
 of it is checked by eye in the demo, not measured.
 
-### 6.1 Live demo through Claude Desktop
+### 6.1 Live demo through Claude Desktop (2026-10-11)
 
-**Not yet run.** To do, with the token on, over the config in the README:
+Run by Arundhati against the running service with the plain README config
+(`mcp-remote` bridging Claude Desktop to the in-process server). **No
+`WR_MCP_TOKEN` was set**, so this run was on a loopback bind with no token. The
+token path through Claude Desktop, including what a wrong token looks like,
+was not exercised and is still untested from the real client.
 
-1. Ask what the fleet looks like (`get_fleet_status`), and confirm the
-   `admin` field appears.
-2. Send traffic through `POST /route`, then ask why one request went where it
-   did (`explain_routing_decision`). The request id is now returned by
-   `POST /route`, which closes the M5a follow-up.
-3. Drain a replica from the chat, send more traffic, and ask why the next
-   request did not use it. Expect "drained by operator".
-4. Restore it, and change the strategy.
-5. Confirm a wrong or missing token fails cleanly. Junaid's check of the
-   `mcp-remote` bridge found that any 401 sends it into OAuth discovery and a
-   registration attempt that our middleware also rejects, so it exits with
-   `Dynamic Client Registration rejected (HTTP 401)` before any sign-in page
-   opens. That was observed against the bridge, not in Claude Desktop itself;
-   check what Claude Desktop shows, and that the correct token connects with
-   no discovery requests after the first POST.
+Traffic was sent through `POST /route` by Claude Code at Arundhati's request
+(six requests, then six more after the drain), and the questions were asked in Claude Desktop.
+`POST /route` returned a `requestId` for each, so the explain path was
+reachable from a client for the first time. That closes the M5a follow-up.
 
-This is the PRD's demo sentence: ask why a request went where it did, then use
-the same client to drain a struggling replica.
+What the transcript shows (steps 1 to 3 and the last step, pasted):
+
+- **Fleet status:** asked what the fleet looks like. Claude called the tool and
+  reported four healthy replicas with `admin: active`, and a table whose
+  in-flight, latency, and consecutive-success figures were the tool's. It
+  added that the identical count of 176 consecutive successes "suggests the
+  fleet was restarted together" and said it had not checked the failover log.
+  That is a hedged inference from the figures, flagged by Claude as
+  unverified, not a tool output. It also said replica-2 "was down at the last
+  reading", which refers to an earlier turn in that chat.
+- **Explain a request:** asked why `4ccaf594-d4c8-4b74-ab0e-84df2fab2d42` went
+  where it did. Claude reported replica-1, `least-loaded`, one round with no
+  exclusions, and a table of the four candidates' in-flight counts and scores
+  that matched the recorded decision. On the tie between replica-1 and
+  replica-2 it said "the record doesn't say how the tie was broken" and
+  offered list order as a guess, labelled as probable. The 54 ms it quoted was
+  the recorded latency.
+- **Aggregate:** asked for p99 over the last 10 minutes and the failures.
+  Claude reported 6 requests, all served, p50 29 ms, p95 and p99 54 ms, and
+  that all six went to replica-1. It noted that with six samples p99 is the
+  single slowest request. These match the six latencies Claude Code
+  recorded when sending the traffic (the slowest was 54 ms).
+- **Unknown replica:** the pasted answer says no replica-9 is registered and
+  the request was rejected as unknown, with replicas 1 to 4 still routable.
+
+Reported as working, but **the transcripts were not captured**, so this
+document does not quote them: the no-data question for an empty window, the
+`drain_replica` call, the post-drain explanation (expected "drained by
+operator", not "unhealthy"; this is the one a reader should most want to see
+verbatim), and restoring a replica with a strategy change. Treat those as
+reported by the person who ran the demo, not as evidence in this document.
+They are the same behaviours `test/integration/m5b.test.ts` asserts against
+the live system.
+
+Not covered: the bearer token through Claude Desktop (above), and any
+measurement of a model's prose against the tool output beyond the spot checks
+here. As in M5a, the tools' output is what is measured; what a model says
+about it is checked by eye.
 
 ## 7. Known deferrals: carry into M6, do not fix now
 
@@ -302,7 +331,9 @@ the same client to drain a struggling replica.
   as a health problem
 - [x] PRD section 8 action reliability measured in
   `test/integration/m5b.test.ts` (section 6)
-- [ ] Demoed live through Claude Desktop (section 6.1): **not yet run**
+- [x] Demoed live through Claude Desktop (section 6.1): read tools, explain
+  with a real request id, aggregate, and the action tools, run without a
+  token. The token path through Claude Desktop is untested.
 - [x] README documents the action tools, the token, and the Claude Desktop
   config (PR #68)
 - [x] Unit + integration tests green in CI
@@ -311,7 +342,7 @@ the same client to drain a struggling replica.
 Checked on 2026-10-11 against `main` after #65, #67, and #68 merged, with CI
 green on them: the full suite (391 tests) passes, the M5b integration test
 passed on two further runs, and the README documents the five tools, the
-token, and the Claude Desktop config. Only the demo and the final sign-off remain.
+token, and the Claude Desktop config. The demo has since been run, see 6.1.
 
 ## 9. Sign-off
 
@@ -338,9 +369,11 @@ token, and the Claude Desktop config. Only the demo and the final sign-off remai
   approved #65. I did not independently review #61, #62, or #67, so those
   boxes above stay Arundhati's to tick. One README fix came out of this
   review: the `curl` example had lost its line breaks.
-- [ ] **Claude Desktop demo run** (section 6.1)
+- [x] **Claude Desktop demo run** (Arundhati, 2026-10-11, section 6.1). Open
+  follow-up: the bearer token has not been exercised through Claude Desktop.
 
-**M5b is complete on `main` except the Claude Desktop demo (6.1). Both
-authors have reviewed this document and ticked their own boxes. The demo is
-the one open item, and the task split's definition of done is not met until it
-is run.**
+**M5b is complete on `main`. Both authors have reviewed this document and
+ticked their own boxes, and the Claude Desktop demo has been run (6.1). One
+follow-up is open: the bearer token has not been exercised through Claude
+Desktop, and the post-drain explanation was reported working but its
+transcript was not captured.**
