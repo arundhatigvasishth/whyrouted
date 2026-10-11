@@ -24,6 +24,7 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { createAuthMiddleware } from "./auth.js";
 import {
   performAction,
   type ActionHandler,
@@ -152,8 +153,13 @@ const METHOD_NOT_ALLOWED = {
  * Build the Express app serving `POST /mcp`. Exposed separately from
  * {@link startMcpServer} so tests can drive it without a fixed port.
  */
-export function createMcpApp(tools: readonly ToolDefinition[]): Express {
+export function createMcpApp(
+  tools: readonly ToolDefinition[],
+  opts: { token?: string } = {},
+): Express {
   const app = express();
+  // First, so it runs before body parsing and before any route, 405s included.
+  if (opts.token !== undefined) app.use(createAuthMiddleware(opts.token));
   app.use(express.json());
 
   app.post("/mcp", async (req, res) => {
@@ -195,6 +201,8 @@ export interface McpServerOptions {
   port: number;
   /** Host to bind. Defaults to 127.0.0.1. */
   host?: string;
+  /** When set, every request must carry it as a bearer token (P2). */
+  token?: string;
 }
 
 export interface RunningMcpServer {
@@ -207,7 +215,7 @@ export interface RunningMcpServer {
 
 export async function startMcpServer(opts: McpServerOptions): Promise<RunningMcpServer> {
   const host = opts.host ?? "127.0.0.1";
-  const app = createMcpApp(opts.tools);
+  const app = createMcpApp(opts.tools, { token: opts.token });
 
   const server = await new Promise<Server>((resolve, reject) => {
     const s = app.listen(opts.port, host, () => resolve(s));
