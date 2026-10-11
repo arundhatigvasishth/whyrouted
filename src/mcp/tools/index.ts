@@ -4,19 +4,25 @@
  * argument (docs/milestones/m5a/shared-contract.md, O1), so nothing here
  * knows about a server or a process.
  *
- * M5a ships exactly the read tools. Action tools (drain, restore, simulate
- * failure, strategy and weight tuning) are M5b and do not belong in this list.
+ * M5a shipped exactly the read tools. M5b's action tools (drain, restore,
+ * simulate failure, strategy and weight tuning) are assembled separately by
+ * `createActionTools`, so the read set stays exactly four and `main.ts` can
+ * decide whether to register the action set at all (docs/milestones/m5b/
+ * shared-contract.md, P2).
  */
 
 import { z } from "zod";
 import type { DecisionLog } from "../../decisions/types.js";
 import type { FailoverLog } from "../../events/types.js";
 import type { RegistryStore } from "../../registry/types.js";
-import { defineTool, type ToolDefinition } from "../server.js";
+import type { RoutingConfig } from "../../routing/types.js";
+import { defineTool, type ActionToolDefinition, type ReadToolDefinition } from "../server.js";
 import { createExplainRoutingDecision } from "./explain-routing-decision.js";
 import { createGetFailoverHistoryTool } from "./get-failover-history.js";
 import { createGetFleetStatusTool } from "./get-fleet-status.js";
 import { createQueryDecisions } from "./query-decisions.js";
+import { createSetRoutingStrategyTool } from "./set-routing-strategy.js";
+import { createSetScoringWeightsTool } from "./set-scoring-weights.js";
 
 export interface ReadToolDeps {
   registry: RegistryStore;
@@ -24,7 +30,7 @@ export interface ReadToolDeps {
   decisionLog: Pick<DecisionLog, "get" | "query">;
 }
 
-export function createReadTools(deps: ReadToolDeps): ToolDefinition[] {
+export function createReadTools(deps: ReadToolDeps): ReadToolDefinition[] {
   return [
     createGetFleetStatusTool(deps.registry),
     createGetFailoverHistoryTool(deps.failoverLog),
@@ -44,5 +50,21 @@ export function createReadTools(deps: ReadToolDeps): ToolDefinition[] {
       },
       handler: createQueryDecisions({ decisionLog: deps.decisionLog }),
     }),
+  ];
+}
+
+export interface ActionToolDeps {
+  routingConfig: RoutingConfig;
+}
+
+/**
+ * The action tools built so far. Each one closes over the live store it
+ * changes, the same instance the router reads, so a change applies to the next
+ * request. The set grows to exactly five as the M5b tools land.
+ */
+export function createActionTools(deps: ActionToolDeps): ActionToolDefinition[] {
+  return [
+    createSetRoutingStrategyTool(deps.routingConfig),
+    createSetScoringWeightsTool(deps.routingConfig),
   ];
 }

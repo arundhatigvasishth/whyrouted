@@ -108,13 +108,21 @@ export function createRoutingEngine(deps: RoutingEngineDeps): RoutingEngine {
   return {
     route(opts?: RouteOptions): RouteResult {
       const snapshot = deps.registry.getSnapshot().replicas;
-      const healthy = snapshot.filter((replica) => replica.runtime.health === "healthy");
+      const healthy = snapshot.filter(
+        (replica) => replica.admin !== "drained" && replica.runtime.health === "healthy",
+      );
 
       // N3: every replica not in `healthy` is excluded before anything is
-      // scored, and never reaches a strategy.
+      // scored, and never reaches a strategy. A drained replica is reported as
+      // `drained` even when it is also unhealthy: the operator's action is the
+      // more specific cause, and fixing its health would not bring it back
+      // (docs/milestones/m5b/shared-contract.md, P1).
       const excluded: ExcludedCandidate[] = snapshot
-        .filter((replica) => replica.runtime.health !== "healthy")
-        .map((replica) => ({ replicaId: replica.id, reason: "unhealthy" as const }));
+        .filter((replica) => replica.admin === "drained" || replica.runtime.health !== "healthy")
+        .map((replica) => ({
+          replicaId: replica.id,
+          reason: replica.admin === "drained" ? ("drained" as const) : ("unhealthy" as const),
+        }));
 
       if (healthy.length === 0) {
         // No strategy is looked up here at all (N4): `strategy` names the

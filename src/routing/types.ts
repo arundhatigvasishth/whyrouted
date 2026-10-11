@@ -71,7 +71,7 @@ export interface CandidateScore {
  */
 export interface ExcludedCandidate {
   replicaId: string;
-  reason: "unhealthy" | "already_tried";
+  reason: "unhealthy" | "already_tried" | "drained";
 }
 
 export interface RoutingStrategy {

@@ -14,7 +14,13 @@
  * deferred until Redis is actually on the table (out of M1 scope).
  */
 
-import type { Replica, ReplicaHealth, ReplicaRuntime, RegistrySnapshot } from "../types.js";
+import type {
+  Replica,
+  ReplicaAdmin,
+  ReplicaHealth,
+  ReplicaRuntime,
+  RegistrySnapshot,
+} from "../types.js";
 
 export interface RegistryStore {
   /** Add a replica with a fresh runtime. Throws if the id is already registered. */
@@ -23,6 +29,11 @@ export interface RegistryStore {
   updateRuntime(id: string, patch: Partial<ReplicaRuntime>): void;
   /** Set just the health state. Throws on an unknown id. */
   setHealth(id: string, health: ReplicaHealth): void;
+  /**
+   * Set operator intent (`active` or `drained`). Throws on an unknown id. Not part of
+   * the scheduler's `HealthSink`, so health polling can never change it.
+   */
+  setAdmin(id: string, admin: ReplicaAdmin): void;
   /** Point-in-time copy of the whole fleet, in registration order. */
   getSnapshot(): RegistrySnapshot;
 }

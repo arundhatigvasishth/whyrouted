@@ -18,6 +18,7 @@ describe("Registry.register", () => {
       id: "replica-1",
       url: "http://127.0.0.1:8001",
       runtime: initialRuntime(),
+      admin: "active",
     });
   });
 
@@ -103,7 +104,7 @@ describe("Registry.getSnapshot", () => {
 
     const snap = reg.getSnapshot();
     snap.replicas[0]!.runtime.inFlight = 999;
-    snap.replicas.push({ id: "ghost", url: "x", runtime: initialRuntime() });
+    snap.replicas.push({ id: "ghost", url: "x", runtime: initialRuntime(), admin: "active" });
 
     const fresh = reg.getSnapshot();
     expect(fresh.replicas).toHaveLength(1);
@@ -121,5 +122,47 @@ describe("Registry.has", () => {
     reg.register(replica("replica-1"));
     expect(reg.has("replica-1")).toBe(true);
     expect(reg.has("replica-2")).toBe(false);
+  });
+});
+
+describe("Registry.setAdmin", () => {
+  it("drains and restores a replica, visible in the snapshot", () => {
+    const reg = new Registry();
+    reg.register(replica("replica-1"));
+    reg.register(replica("replica-2"));
+
+    reg.setAdmin("replica-1", "drained");
+    expect(reg.getSnapshot().replicas.map((r) => r.admin)).toEqual(["drained", "active"]);
+
+    reg.setAdmin("replica-1", "active");
+    expect(reg.getSnapshot().replicas[0]!.admin).toBe("active");
+  });
+
+  it("leaves runtime and health untouched", () => {
+    const reg = new Registry();
+    reg.register(replica("replica-1"));
+    reg.setHealth("replica-1", "healthy");
+    reg.updateRuntime("replica-1", { inFlight: 4 });
+    const before = reg.getSnapshot().replicas[0]!.runtime;
+
+    reg.setAdmin("replica-1", "drained");
+
+    expect(reg.getSnapshot().replicas[0]!.runtime).toEqual(before);
+  });
+
+  it("survives health and runtime writes", () => {
+    const reg = new Registry();
+    reg.register(replica("replica-1"));
+    reg.setAdmin("replica-1", "drained");
+
+    reg.setHealth("replica-1", "healthy");
+    reg.updateRuntime("replica-1", { inFlight: 2, consecSuccesses: 7 });
+    reg.setHealth("replica-1", "unhealthy");
+
+    expect(reg.getSnapshot().replicas[0]!.admin).toBe("drained");
+  });
+
+  it("throws on an unknown id", () => {
+    expect(() => new Registry().setAdmin("ghost", "drained")).toThrow(/not registered/);
   });
 });
