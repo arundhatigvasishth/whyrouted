@@ -165,10 +165,32 @@ demo will use:
 }
 ```
 
-The bridge also sent one request with no `Authorization` header alongside the
-authenticated ones, which looks like a probe. P11 must confirm that a 401 on
-that request does not send the bridge into a browser sign-in flow, before the
-rest of the auth work is built on this.
+### What a 401 does to the bridge
+
+The bridge sends two probe requests with no `Authorization` header at startup
+(`/.well-known/openid-configuration/mcp` and
+`/mcp/.well-known/openid-configuration`). Separately, it was tested against a
+server that answers **every** request with 401, once with and once without a
+`WWW-Authenticate: Bearer` header, using a wrong token:
+
+- **The header is not the trigger.** Both runs behaved identically. Any 401 on
+  `POST /mcp` sends the bridge into OAuth discovery: it requests
+  `/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`
+  and `/.well-known/openid-configuration`, starts a local callback server,
+  then tries dynamic client registration with `POST /register`.
+- **With this server it ends cleanly.** Our middleware answers all of those
+  with 401 too, so registration is rejected and the bridge exits with
+  `Dynamic Client Registration rejected (HTTP 401)`. The flow stops at
+  registration, before any sign-in page would be opened. (This was observed,
+  not read from the bridge's source.)
+- **So the header stays.** `WWW-Authenticate: Bearer` is the correct 401 for a
+  bearer endpoint, and dropping it changes nothing for this client.
+
+What this means for a person using it: a wrong or missing token shows up in
+Claude Desktop as a failed server with that registration error in its log,
+not as a prompt. The README's token setup should say so, because it is not an
+obvious message. P11 still tests the happy path against the real middleware
+(correct token connects, no discovery requests follow the first POST).
 
 ### The call
 
