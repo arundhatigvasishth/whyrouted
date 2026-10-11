@@ -138,6 +138,32 @@ function expectGrounded(d: Decision): void {
   }
 }
 
+const drainedPick = decision({
+  chosenReplicaId: "alpha",
+  rounds: [
+    round({
+      candidates: [cand("alpha", 1)],
+      excluded: [
+        { replicaId: "beta", reason: "drained" },
+        { replicaId: "gamma", reason: "unhealthy" },
+      ],
+      pickedReplicaId: "alpha",
+    }),
+  ],
+});
+
+const allDrained = decision({
+  rounds: [
+    round({
+      outcome: "no_healthy_replicas",
+      excluded: [
+        { replicaId: "alpha", reason: "drained" },
+        { replicaId: "beta", reason: "drained" },
+      ],
+    }),
+  ],
+});
+
 describe("explainDecision", () => {
   it("explains a single-round success from recorded values, lowest score first", () => {
     const { decision: echoed, lines } = explainDecision(singleRound);
@@ -163,6 +189,24 @@ describe("explainDecision", () => {
       "Round 1 (round-robin): picked alpha (rotation position 0), then in rotation: beta (rotation position 1).",
     );
     expect(line!.text).not.toMatch(/load|latency|lowest/);
+  });
+
+  it("words a drain as an operator action and keeps unhealthy as a fault", () => {
+    const { lines } = explainDecision(drainedPick);
+    expect(lines[1]!.text).toBe(
+      "Round 1 (least-loaded): picked alpha (score 1). Excluded: beta (drained by operator), gamma (unhealthy).",
+    );
+    expect(lines[1]!.text).not.toMatch(/beta \(unhealthy\)/);
+    expect(lines[1]!.cites).toContain("rounds[0].excluded[0].reason");
+  });
+
+  it("does not call a fleet unhealthy when every replica was drained", () => {
+    const { lines } = explainDecision(allDrained);
+    expect(lines.map((l) => l.text)).toEqual([
+      "No replica returned a usable response, after 1 round.",
+      "Round 1: no replica was available to route to. Excluded: alpha (drained by operator), beta (drained by operator).",
+    ]);
+    expect(lines[1]!.text).not.toMatch(/healthy/);
   });
 
   it("does not credit a strategy with a round where the fleet had no healthy replica", () => {

@@ -222,9 +222,15 @@ attaches it).
 ```ts
 export interface ExcludedCandidate {
   replicaId: string;
-  reason: "unhealthy" | "already_tried";
+  reason: "unhealthy" | "already_tried" | "drained";
 }
 ```
+
+**Widened in M5b:** `drained` is the third reason, added for operator drain
+(`docs/milestones/m5b/shared-contract.md`, P1). Everything below that says
+"exactly two" or "unhealthy or already tried" was written before it; read it
+with `drained` added. The two places that actually change are called out
+inline.
 
 **Rules:**
 - The strategy never sees, filters, or produces `ExcludedCandidate` entries.
@@ -235,7 +241,10 @@ export interface ExcludedCandidate {
   same boundary M3 already drew for `exclude`, just extended to cover the
   observability path too.
 - Exactly two reasons for M4, matching the two ways a registered replica can
-  fail to reach `score()`/`pick()`:
+  fail to reach `score()`/`pick()` (M5b adds a third, `drained`, filtered by
+  the engine ahead of the health check; a drained replica reports `drained`
+  even when it is also unhealthy, since the operator's action is the more
+  specific cause):
   - `unhealthy`: filtered by the engine's existing `healthy` check.
   - `already_tried`: filtered by the engine's existing `exclude` check
     (a replica this same request already attempted in an earlier retry
@@ -294,7 +303,8 @@ guess, and so a `no_healthy_replicas` round's `strategy` field isn't read as
 
 The filtering that produces this is:
 1. Replicas in the full registry snapshot not in `healthy` -> `excluded` with
-   `reason: "unhealthy"`. Never passed to `score()` or `pick()`.
+   `reason: "unhealthy"`, or `"drained"` for a drained replica (M5b), which
+   takes precedence. Never passed to `score()` or `pick()`.
 2. Of the remaining (`healthy`), any in `opts.exclude` -> `excluded` with
    `reason: "already_tried"`. Also never scored.
 3. Everything left is the round's actual candidate pool: `score()` is always
