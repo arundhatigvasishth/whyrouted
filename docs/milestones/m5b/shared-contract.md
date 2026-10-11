@@ -1,8 +1,9 @@
 # M5b Shared Contract (P1 to P4)
 
-**Status:** half drafted. Arundhati drafted P1 and P4 below; Junaid reviews
-them. Junaid's P2 and P3 are to-do lists in their marked sections, to be
-replaced with the agreed text, and Arundhati reviews those. P5 onward build against this doc once both halves are signed off.
+**Status:** drafted. Arundhati drafted P1 and P4; Junaid drafted P2 and P3
+and reviews P1 and P4. Each half still needs the other's review before the
+boxes at the bottom are checked. P5 onward build against this doc once both
+halves are signed off.
 **Covers:** how a drained replica is represented (P1), `/mcp` authentication
 (P2), the action result envelope (P3), and `simulate_failure` semantics (P4).
 See [`task-split.md`](task-split.md) for why these four come first.
@@ -129,39 +130,125 @@ persistence waits for the Redis-backed store (M7/M8).
 
 ## P2: `/mcp` authentication
 
-*Junaid to write. Use the same layout as M5a's O3 and O4: the call, the
-shape, the rules, an example. Leading answer from the task split: one bearer
-token from `WR_MCP_TOKEN`, and the server refuses to register action tools on
-a non-loopback bind with no token. Confirm or change each of these, and write
-the answer down:*
+### The check that decided the design
 
-1. **Do this check first, before writing the rest.** Claude Desktop reaches
-   the server through the `mcp-remote` bridge. Can it send an `Authorization:
-   Bearer` header (a `--header` flag or an env var)? Record what you found and
-   the exact config the demo will use. If it cannot, this whole section
-   changes, so say so here before P11 starts.
-2. **Scope of the token.** Required on every call to `/mcp`, or only on the
-   five action tools with reads staying open? Leading answer: the whole
-   endpoint when `WR_MCP_TOKEN` is set. One rule is easier to explain than
-   two, and the read tools expose request ids and replica URLs.
-3. **When no token is set.** Loopback bind (the default `127.0.0.1`): all nine
-   tools work, as in M5a, so the local demo is one env var away from secure
-   and zero away from working. Non-loopback bind: action tools are not
-   registered at all, and the startup log says why. State the exact test for
-   "loopback" (`127.0.0.1`, `::1`, `localhost`) and what happens for
-   `0.0.0.0`.
-4. **What an unauthenticated call returns.** HTTP 401 at the transport, before
-   MCP parsing, or an MCP-level error? State the status, body, and whether the
-   response says "missing" versus "wrong" (leading answer: it does not
-   distinguish).
-5. **Mechanics.** Constant-time compare, where the token is read (`Config`
-   field name, how `loadConfig` validates it, empty string treated as unset),
-   and that it is never logged, including in the startup banner.
-6. **What this does not cover.** Per-user identity and audit by user are M8
-   (ALB). Say so, so nobody reads this as an audit trail.
+Claude Desktop reaches the server through the `mcp-remote` bridge, so the
+token has to travel through it. Checked on 2026-10-11 by pointing the bridge
+at a stand-in server that records request headers:
 
-*Sources: `src/mcp/server.ts` (the Express app at `app.listen`),
-`src/config.ts` (`host`, `mcpPort`), `docs/architecture/m5a.md` §7 item 5.*
+- `--header "Authorization: Bearer abc123"` arrives as `Authorization: Bearer
+  abc123` on the POST.
+- `--header "Authorization:${VAR}"`, with `VAR` set in the bridge's
+  environment to `Bearer <token>`, also arrives intact. This is the form the
+  demo uses, because a space inside a command-line argument is fragile in
+  Windows config files and the token stays out of the args list.
+
+So bearer auth works with the demo path and the design stands. The config the
+demo will use:
+
+```json
+{
+  "mcpServers": {
+    "whyrouted": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "http://127.0.0.1:8090/mcp",
+        "--allow-http",
+        "--header",
+        "Authorization:${WHYROUTED_AUTH}"
+      ],
+      "env": { "WHYROUTED_AUTH": "Bearer <the WR_MCP_TOKEN value>" }
+    }
+  }
+}
+```
+
+The bridge also sent one request with no `Authorization` header alongside the
+authenticated ones, which looks like a probe. P11 must confirm that a 401 on
+that request does not send the bridge into a browser sign-in flow, before the
+rest of the auth work is built on this.
+
+### The call
+
+**One bearer token, `WR_MCP_TOKEN`, required on every request to `/mcp` when
+it is set.** Not only on the five action tools. One rule is easier to explain
+than two, and the read tools expose request ids and replica URLs.
+
+```ts
+// src/mcp/auth.ts
+import type { RequestHandler } from "express";
+
+/** True for `127.0.0.1`, `::1`, and `localhost` (trimmed, case-insensitive). */
+export function isLoopbackHost(host: string): boolean;
+
+/** `Authorization: Bearer <token>` against the configured token, in constant time. */
+export function bearerMatches(header: string | undefined, token: string): boolean;
+
+/** Express middleware: 401 unless the request carries the token. */
+export function createAuthMiddleware(token: string): RequestHandler;
+
+export type ActionPolicy = { allowed: true } | { allowed: false; reason: string };
+
+/** Whether the five action tools may be registered for this bind and token. */
+export function actionToolsAllowed(opts: {
+  host: string;
+  token: string | undefined;
+}): ActionPolicy;
+```
+
+### Rules
+
+- **Token set:** every request to `/mcp` must carry it, on any bind, and all
+  nine tools are registered. The middleware runs before body parsing and
+  before the 405 handlers, so `GET` and `DELETE` are also rejected with 401
+  without the token, not told 405.
+- **No token, loopback bind** (`127.0.0.1`, `::1`, `localhost`, the default):
+  nothing is required and all nine tools work. The local demo is one env var
+  from secure and zero from working.
+- **No token, any other bind** (`0.0.0.0`, `::`, a LAN address, any other
+  name): the four read tools stay as they were in M5a, the five **action tools
+  are not registered at all**, and startup logs one line saying why and how to
+  fix it ("set WR_MCP_TOKEN"). They are absent from `tools/list`, not present
+  and rejecting, so there is nothing to call. The unsafe configuration is
+  impossible, not documented.
+- **What an unauthenticated call gets:** HTTP `401`, header
+  `WWW-Authenticate: Bearer`, body `{ "error": "unauthorized" }`, returned at
+  the transport before any MCP parsing. A missing token and a wrong token get
+  the identical response, so the endpoint does not confirm which was wrong.
+- **Scheme parsing:** `Bearer` is matched case-insensitively followed by one
+  space and the token. Anything else (`Basic`, no space, empty) is a wrong
+  token.
+
+### Mechanics
+
+- **Config:** `Config.mcpToken: string | undefined`, read from
+  `WR_MCP_TOKEN`. Empty or whitespace-only is treated as unset. A token
+  shorter than 16 characters is rejected by `loadConfig` with the other
+  validation errors, so a one-character "token" cannot be set by accident.
+- **Constant time:** both sides are hashed with SHA-256 and the digests
+  compared with `crypto.timingSafeEqual`. Hashing first means the compare
+  never throws on a length mismatch and does not leak the token's length.
+- **Never logged.** Not in the startup banner, not in errors, not in the 401
+  body. The banner says `auth: token required` or `auth: none (loopback
+  only)`, nothing more.
+- **Wiring:** `startMcpServer` takes an optional `token`. When given, the
+  middleware is installed first in `createMcpApp`. `main.ts` calls
+  `actionToolsAllowed` and registers the action tools only when it returns
+  `allowed: true`.
+
+### What this does not cover
+
+Per-user identity and audit by user are M8 (the ALB). The token is one shared
+secret: it says "someone with the token", not who, so this is **not an audit
+trail**. It is also plain HTTP, so a token sent over a non-loopback bind is
+readable on the network until M8 puts TLS in front. Rotating the token means
+restarting. None of that is a gap for the localhost demo, and the section
+exists so nobody reads this as more than it is.
+
+_Sources: `src/mcp/server.ts` (`createMcpApp`, `startMcpServer`),
+`src/config.ts` (`host`, `mcpPort`), `docs/architecture/m5a.md` §7 item 5._
 
 ---
 
