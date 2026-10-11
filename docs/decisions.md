@@ -3,6 +3,28 @@
 Load-bearing technical decisions and why we made them. Newest first. Add an entry
 when a choice would be expensive to reverse or isn't obvious from the code.
 
+
+---
+
+## 2026-10-11: a drained replica is operator intent on `ReplicaState.admin`, not a health value
+
+`ReplicaState` gains `admin: "active" | "drained"`, beside `runtime`. It is set
+only through `RegistryStore.setAdmin`. The engine excludes a drained replica in
+the same pre-filter as an unhealthy one, with the reason `drained`, which wins
+over `unhealthy` when a replica is both.
+
+**Why:** the health scheduler rewrites health on every probe and on every
+request-driven ejection, so a `"draining"` health value would be undone within
+one poll interval. Keeping drain beside `runtime` means the scheduler's
+`updateRuntime(Partial<ReplicaRuntime>)` cannot reach it at the type level, with
+no change to the scheduler. It also keeps "the replica is broken" and "an
+operator took it out" as two facts, which `explain_routing_decision` needs to
+tell apart.
+
+**Limits:** drain is in-memory like the registry, so a restart returns every
+replica to `active`. `GET /status` gains an additive `admin` field per replica.
+Details in `docs/milestones/m5b/shared-contract.md`, P1.
+
 ---
 
 ## 2026-09-29: the MCP server runs in-process with the API server for M5a

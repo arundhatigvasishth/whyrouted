@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { ReplicaState, ReplicaHealth, RegistrySnapshot } from "../src/types.js";
+import type { ReplicaState, ReplicaHealth, ReplicaAdmin, RegistrySnapshot } from "../src/types.js";
 import type { RoutingConfig, ScoringWeights, StrategyName } from "../src/routing/types.js";
 import { DEFAULT_SCORING_WEIGHTS } from "../src/routing/types.js";
 import { createRoutingEngine } from "../src/routing/engine.js";
@@ -9,6 +9,7 @@ function replica(
   health: ReplicaHealth,
   inFlight = 0,
   latencyMs: number | null = 10,
+  admin: ReplicaAdmin = "active",
 ): ReplicaState {
   return {
     id,
@@ -21,6 +22,7 @@ function replica(
       consecSuccesses: 1,
       lastCheckedAt: "2026-09-06T00:00:00.000Z",
     },
+    admin,
   };
 }
 
@@ -216,6 +218,85 @@ describe("routing engine", () => {
       strategy: "latency-weighted",
       candidates: [],
       excluded: [],
+    });
+  });
+
+  describe("drained replicas (M5b)", () => {
+    it("never hands a drained replica to the strategy, and reports why", () => {
+      const registry = fakeRegistry([
+        replica("replica-1", "healthy", 0, 10, "drained"),
+        replica("replica-2", "healthy", 5),
+      ]);
+      const result = createRoutingEngine({
+        registry,
+        config: fakeConfig("least-loaded"),
+      }).route();
+
+      // replica-1 is idle and would win on load, so picking replica-2 proves it was filtered.
+      expect(result).toMatchObject({ ok: true, replicaId: "replica-2" });
+      if (!result.ok) throw new Error("unreachable");
+      expect(result.candidates.map((c) => c.replicaId)).toEqual(["replica-2"]);
+      expect(result.excluded).toEqual([{ replicaId: "replica-1", reason: "drained" }]);
+    });
+
+    it("reports a replica as drained, not unhealthy, when it is both", () => {
+      const registry = fakeRegistry([
+        replica("replica-1", "unhealthy", 0, null, "drained"),
+        replica("replica-2", "unhealthy"),
+        replica("replica-3", "healthy"),
+      ]);
+      const result = createRoutingEngine({ registry, config: fakeConfig() }).route();
+
+      if (!result.ok) throw new Error("expected a pick");
+      expect(result.excluded).toEqual([
+        { replicaId: "replica-1", reason: "drained" },
+        { replicaId: "replica-2", reason: "unhealthy" },
+      ]);
+    });
+
+    it("takes the no_healthy_replicas path when every healthy replica is drained", () => {
+      const registry = fakeRegistry([
+        replica("replica-1", "healthy", 0, 10, "drained"),
+        replica("replica-2", "healthy", 0, 10, "drained"),
+      ]);
+      const result = createRoutingEngine({ registry, config: fakeConfig() }).route();
+
+      expect(result).toEqual({
+        ok: false,
+        error: "no_healthy_replicas",
+        strategy: "round-robin",
+        candidates: [],
+        excluded: [
+          { replicaId: "replica-1", reason: "drained" },
+          { replicaId: "replica-2", reason: "drained" },
+        ],
+      });
+    });
+
+    it("routes to the replica again once it is restored", () => {
+      const registry = fakeRegistry([replica("replica-1", "healthy", 0, 10, "drained")]);
+      const engine = createRoutingEngine({ registry, config: fakeConfig() });
+      expect(engine.route().ok).toBe(false);
+
+      registry.set([replica("replica-1", "healthy")]);
+      expect(engine.route()).toMatchObject({ ok: true, replicaId: "replica-1" });
+    });
+
+    it("keeps a drained replica out of the retry pool too", () => {
+      const registry = fakeRegistry([
+        replica("replica-1", "healthy"),
+        replica("replica-2", "healthy", 0, 10, "drained"),
+      ]);
+      const result = createRoutingEngine({ registry, config: fakeConfig() }).route({
+        exclude: ["replica-1"],
+      });
+
+      expect(result).toMatchObject({ ok: false, error: "no_routable_replica" });
+      if (result.ok) throw new Error("unreachable");
+      expect(result.excluded).toEqual([
+        { replicaId: "replica-2", reason: "drained" },
+        { replicaId: "replica-1", reason: "already_tried" },
+      ]);
     });
   });
 
