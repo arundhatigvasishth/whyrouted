@@ -1,18 +1,18 @@
 # M5b Architecture Review
 
-**Reviewers:** Arundhati Vasishth (draft), Junaid Pathan (review pending)
+**Reviewers:** Arundhati Vasishth (draft), Junaid Pathan (reviewed 2026-10-11)
 **Date:** 2026-10-11
-**Status:** draft. Not signed off. Two items are open: Junaid's review of this
-document and the live Claude Desktop demo (section 6.1).
+**Status:** reviewed by both authors. One item is open: the live Claude
+Desktop demo (section 6.1).
 **Purpose:** Walk the MCP action-tool seam before M6. Confirm the five action
 tools change only what they say they changed, that no action is reachable
 without the auth gate, that drain is operator intent held apart from health,
 that the four M5a read tools were not weakened, and that no dashboard (M6)
 concern leaked in.
 
-**Scope reviewed:** everything on `main` plus the two open M5b PRs that
-complete it (the drain and restore tools with the `main.ts` wiring, #65, and
-the integration test, #67). This document should merge after them. Files:
+**Scope reviewed:** everything on `main` at merge of PR #68, which includes the
+drain and restore tools with the `main.ts` wiring (#65) and the integration
+test (#67). Files:
 `src/mcp/` (`action.ts`, `auth.ts`, `server.ts`, `tools/*`), the drained state
 in `src/types.ts`, `src/registry/`, and `src/routing/engine.ts`,
 `src/replica/fault-injector.ts`, `WR_MCP_TOKEN` in `src/config.ts`, the wiring
@@ -282,38 +282,40 @@ the same client to drain a struggling replica.
 
 ## 8. M5b definition of done (from the task split)
 
-- [ ] Exactly four read tools and five action tools are registered, and a test
-  pins both sets (`test/mcp-tool-set.test.ts`; on `main` once #65 merges)
-- [ ] No action tool is reachable without the auth gate, and the server
+- [x] Exactly four read tools and five action tools are registered, and a test
+  pins both sets (`test/mcp-tool-set.test.ts`)
+- [x] No action tool is reachable without the auth gate, and the server
   refuses to expose them on a non-loopback bind without a token
   (`test/mcp-auth.test.ts`, `test/mcp-tool-set.test.ts`,
   `test/integration/m5b.test.ts`)
-- [ ] `drain_replica` stops new traffic within 1s, in-flight requests are not
+- [x] `drain_replica` stops new traffic within 1s, in-flight requests are not
   cut off, the health scheduler does not undo it, and `restore_replica`
   returns the replica to the pool (integration test, scheduler test)
-- [ ] `simulate_failure` injects a fault through the `FaultInjector`
+- [x] `simulate_failure` injects a fault through the `FaultInjector`
   interface, leaving `ReplicaAdapter` at two functions, returns `unsupported`
   when no injector is wired, and the fleet fails over as in M3
-- [ ] `set_routing_strategy` and `set_scoring_weights` change live routing,
+- [x] `set_routing_strategy` and `set_scoring_weights` change live routing,
   and invalid input is rejected without changing state
-- [ ] Every action returns what actually changed, read back from the store,
+- [x] Every action returns what actually changed, read back from the store,
   and a repeat or no-op call is `changed: false`, not a failure
-- [ ] A decision made after a drain is explained as an operator action, never
+- [x] A decision made after a drain is explained as an operator action, never
   as a health problem
-- [ ] PRD section 8 action reliability measured in
+- [x] PRD section 8 action reliability measured in
   `test/integration/m5b.test.ts` (section 6)
 - [ ] Demoed live through Claude Desktop (section 6.1): **not yet run**
-- [ ] README documents the action tools, the token, and the Claude Desktop
-  config (this PR)
-- [ ] Unit + integration tests green in CI
+- [x] README documents the action tools, the token, and the Claude Desktop
+  config (PR #68)
+- [x] Unit + integration tests green in CI
 - [ ] Both authors have signed off (this document, section 9)
 
-Boxes stay unchecked until #65, #67, and this PR are on `main` and CI is green
-on them, so the checklist describes `main` and not a branch.
+Checked on 2026-10-11 against `main` after #65, #67, and #68 merged, with CI
+green on them: the full suite (391 tests) passes, the M5b integration test
+passed on two further runs, and the README documents the five tools, the
+token, and the Claude Desktop config. Only the demo and the final sign-off remain.
 
 ## 9. Sign-off
 
-- [ ] Shared contract P1 to P4: agreed in
+- [x] Shared contract P1 to P4: agreed in
   `docs/milestones/m5b/shared-contract.md` (both, 2026-10-11)
 - [ ] Drained state, engine pre-filter, explain wording, `drain_replica`,
   `restore_replica`, the `main.ts` wiring, and the integration test: built and
@@ -322,7 +324,19 @@ on them, so the checklist describes `main` and not a branch.
   `simulate_failure` and the fault injector: built by Junaid (PRs #60, #63,
   #64, #66); read and checked against the contract by Arundhati, #63 re-run
   locally after the merge in 4.9
-- [ ] **Junaid's review of this document**
+- [x] **Junaid's review of this document** (2026-10-11). Checked against
+  `main` rather than taken on trust: the full suite passes (391 tests) and
+  the M5b integration test passed on two more runs; CI is green on #65, #67,
+  and #68; 4.2 is accurate, since `launchFleet` hands every replica the same
+  `WR_HOST` the MCP server binds to, so a token on `/mcp` does not protect the
+  replicas' admin endpoints; the tool-set test pins four read and five action
+  tools and the unregistered-without-token case; 4.6 and 4.7 match what the
+  tools do. I read `createMcpTools` and `setReplicaAdmin` line by line when I
+  approved #65. I did not independently review #61, #62, or #67, so those
+  boxes above stay Arundhati's to tick. One README fix came out of this
+  review: the `curl` example had lost its line breaks.
 - [ ] **Claude Desktop demo run** (section 6.1)
 
-**M5b is not complete until the open boxes above are checked.**
+**M5b is complete on `main` except the Claude Desktop demo (6.1). Both
+authors have reviewed this document. The demo and Arundhati's own boxes are
+the open items.**
