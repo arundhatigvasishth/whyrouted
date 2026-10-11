@@ -53,6 +53,31 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ WR_MCP_PORT: "70000" })).toThrow(/WR_MCP_PORT must be between/);
   });
 
+  it("leaves the MCP token unset by default, and treats empty or blank as unset", () => {
+    expect(loadConfig({}).mcpToken).toBeUndefined();
+    expect(loadConfig({ WR_MCP_TOKEN: "" }).mcpToken).toBeUndefined();
+    expect(loadConfig({ WR_MCP_TOKEN: "   " }).mcpToken).toBeUndefined();
+  });
+
+  it("reads WR_MCP_TOKEN, trimmed", () => {
+    expect(loadConfig({ WR_MCP_TOKEN: "  0123456789abcdef  " }).mcpToken).toBe("0123456789abcdef");
+  });
+
+  it("rejects a token under 16 characters, without putting the token in the message", () => {
+    expect(() => loadConfig({ WR_MCP_TOKEN: "short-secret" })).toThrow(
+      /WR_MCP_TOKEN must be at least 16 characters/,
+    );
+    try {
+      loadConfig({ WR_MCP_TOKEN: "short-secret" });
+    } catch (e) {
+      expect(String(e)).not.toContain("short-secret");
+    }
+  });
+
+  it("accepts a token of exactly 16 characters", () => {
+    expect(loadConfig({ WR_MCP_TOKEN: "a".repeat(16) }).mcpToken).toHaveLength(16);
+  });
+
   it("defaults WR_MAX_RETRIES to 2", () => {
     expect(loadConfig({}).maxRetries).toBe(2);
   });

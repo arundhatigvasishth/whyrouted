@@ -28,6 +28,12 @@ export interface Config {
   basePort: number;
   /** Port `GET /status` listens on. */
   statusPort: number;
+  /**
+   * Bearer token required on every request to `/mcp` when set (M5b). `undefined` means no
+   * auth, which is only safe on a loopback bind: see `actionToolsAllowed` in `src/mcp/auth.ts`.
+   * Never logged. At least 16 characters.
+   */
+  mcpToken: string | undefined;
   /** Port the MCP server listens on (Streamable HTTP, `POST /mcp`). Same process as the API server, see docs/decisions.md 2026-09-29. */
   mcpPort: number;
   /** How often the health scheduler polls each replica, in ms. */
@@ -52,6 +58,7 @@ export const DEFAULT_CONFIG: Config = {
   basePort: 8001,
   statusPort: 8080,
   mcpPort: 8090,
+  mcpToken: undefined,
   healthIntervalMs: 500,
   healthTimeoutMs: 200,
   unhealthyThreshold: 3,
@@ -60,6 +67,8 @@ export const DEFAULT_CONFIG: Config = {
   scoringWeights: { ...DEFAULT_SCORING_WEIGHTS },
   maxRetries: 2,
 };
+
+const MIN_TOKEN_LENGTH = 16;
 
 type Env = Record<string, string | undefined>;
 
@@ -106,6 +115,7 @@ export function loadConfig(env: Env = process.env): Config {
     basePort: readInt(env, "WR_BASE_PORT", DEFAULT_CONFIG.basePort),
     statusPort: readInt(env, "WR_STATUS_PORT", DEFAULT_CONFIG.statusPort),
     mcpPort: readInt(env, "WR_MCP_PORT", DEFAULT_CONFIG.mcpPort),
+    mcpToken: env.WR_MCP_TOKEN?.trim() || undefined,
     healthIntervalMs: readInt(env, "WR_HEALTH_INTERVAL_MS", DEFAULT_CONFIG.healthIntervalMs),
     healthTimeoutMs: readInt(env, "WR_HEALTH_TIMEOUT_MS", DEFAULT_CONFIG.healthTimeoutMs),
     unhealthyThreshold: readInt(env, "WR_UNHEALTHY_THRESHOLD", DEFAULT_CONFIG.unhealthyThreshold),
@@ -154,6 +164,11 @@ function validate(c: Config): void {
   }
   if (c.mcpPort === c.statusPort) {
     errors.push(`WR_MCP_PORT ${c.mcpPort} collides with WR_STATUS_PORT`);
+  }
+
+  // The message names the rule, never the value: the token must not reach a log.
+  if (c.mcpToken !== undefined && c.mcpToken.length < MIN_TOKEN_LENGTH) {
+    errors.push(`WR_MCP_TOKEN must be at least ${MIN_TOKEN_LENGTH} characters`);
   }
 
   if (c.healthIntervalMs < 1) errors.push("WR_HEALTH_INTERVAL_MS must be >= 1");
