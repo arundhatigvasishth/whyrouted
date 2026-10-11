@@ -451,11 +451,10 @@ Under P3's envelope, for `simulate_failure`:
 - `changed` is `false` when the reported state equals what the replica
   already had, which needs one read before the write. If the replica has no
   state-read endpoint, `revive` on a healthy replica still reports
-  honestly from the admin response. **Open question for Junaid:** whether
-  P3 allows `before` to be optional on this one tool, or whether a read-only
-  `GET /admin/state` is added to the simulated replica so `before` is real.
-  I lean toward optional `before`, because adding a replica endpoint widens
-  the M1 HTTP surface for a field no client needs.
+  honestly from the admin response. **Resolved in P3:** `before` is
+  optional on this one tool, and no `GET /admin/state` is added. Adding a
+  replica endpoint would widen the M1 HTTP surface for a field no client
+  needs. `changed` is `null` for this tool, not a guess.
 - The result does **not** claim the replica is now unhealthy. A kill takes
   about 1.5 seconds to show in the registry. The result says the fault was
   injected and points at `get_fleet_status` for the health effect. This is
@@ -483,6 +482,11 @@ Under P3's envelope, for `simulate_failure`:
 - **The replica HTTP admin surface** (`/admin/kill`, `/fail-infer`,
   `/revive`). `FaultInjector` wraps it; it does not add endpoints.
 - **`RegistryStore` stays synchronous.**
+- **`dispatch`, `defineTool`, and `toCallToolResult`.** Unchanged. The only
+  change to `ToolDefinition` is the added `kind` field (P3), which
+  `defineTool` sets to `"read"`.
+- **No `unauthorized` code in `ActionResult`.** Authentication is rejected at
+  the transport (P2).
 
 ## Not frozen
 
@@ -495,16 +499,32 @@ Under P3's envelope, for `simulate_failure`:
 
 ## Sign-off checklist
 
-Arundhati's items (Junaid to review):
-- [ ] P1: `admin` on `ReplicaState`, not a health value; `setAdmin` on
-      `RegistryStore` only, `HealthSink` unchanged.
-- [ ] P1: `drained` wins over `unhealthy` in the engine's `excluded` reason.
-- [ ] P1: draining the last routable replica is allowed and reported.
-- [ ] P4: three modes on one tool, `revive` clears faults, `restore_replica`
+Arundhati's items (Junaid reviewed 2026-10-11):
+- [x] P1: `admin` on `ReplicaState`, not a health value; `setAdmin` on
+      `RegistryStore` only, `HealthSink` unchanged. Checked against the code:
+      `HealthSink` is `Pick<RegistryStore, "updateRuntime" | "setHealth">`
+      (`scheduler.ts:26`) and `updateRuntime` takes `Partial<ReplicaRuntime>`,
+      so the scheduler cannot write a field on `ReplicaState` at the type
+      level. The `setHealth` call she cites is at `scheduler.ts:141`.
+- [x] P1: `drained` wins over `unhealthy` in the engine's `excluded` reason.
+- [x] P1: draining the last routable replica is allowed and reported.
+- [x] P4: three modes on one tool, `revive` clears faults, `restore_replica`
       does not.
-- [ ] P4: `FaultInjector` off the adapter, `unsupported` when unwired.
-- [ ] P4: open question on optional `before` for this tool.
+- [x] P4: `FaultInjector` off the adapter, `unsupported` when unwired.
+      `FaultState` matches the `{ killed, inferFailing }` body the replica's
+      admin endpoints return today.
+- [x] P4: open question on optional `before`: answered in P3, optional on this
+      tool only, no new replica endpoint.
 
 Junaid's items (Arundhati to review):
-- [ ] P2: `/mcp` authentication.
-- [ ] P3: action result envelope.
+- [ ] P2: bearer token on the whole endpoint, loopback test, action tools
+      unregistered on a non-loopback bind with no token, 401 shape, 16
+      character minimum, constant-time compare. The `mcp-remote` header check
+      is done and recorded in P2.
+- [ ] P3: `ActionResult` and `performAction`, derived `changed` (`null` when
+      there is no `before`), `before` required for four tools and optional for
+      one, `unauthorized` dropped, `isError` table, `kind` on
+      `ToolDefinition`.
+- [ ] P3: the weights correction. Only `latency-weighted` reads the scoring
+      weights, so `set_scoring_weights` adds a note unless it is active.
+
