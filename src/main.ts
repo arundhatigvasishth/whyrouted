@@ -24,7 +24,8 @@ import { startStatusServer, type RunningStatusServer } from "./api/server.js";
 import { createFailoverLog } from "./events/failover-log.js";
 import { createDecisionLog } from "./decisions/decision-log.js";
 import { startMcpServer, type RunningMcpServer } from "./mcp/server.js";
-import { createReadTools } from "./mcp/tools/index.js";
+import { createMcpTools } from "./mcp/tools/index.js";
+import { createHttpFaultInjector } from "./replica/fault-injector.js";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -107,12 +108,24 @@ async function main(): Promise<void> {
     `api server listening on ${status.url} (GET /status, POST /route), routing strategy: ${routingConfig.getStrategyName()}`,
   );
 
+  const { tools: mcpTools, notices } = createMcpTools({
+    registry,
+    failoverLog,
+    decisionLog,
+    routingConfig,
+    // The fleet `main` launches is always simulated, so it has a kill switch.
+    injector: createHttpFaultInjector({ replicas }),
+    host: config.host,
+    token: config.mcpToken,
+  });
   const mcp: RunningMcpServer = await startMcpServer({
-    tools: createReadTools({ registry, failoverLog, decisionLog }),
+    tools: mcpTools,
     port: config.mcpPort,
     host: config.host,
+    token: config.mcpToken,
   });
-  console.log(`mcp server listening on ${mcp.url}`);
+  console.log(`mcp server listening on ${mcp.url} (${mcpTools.length} tools)`);
+  for (const line of notices) console.log(line);
 
   const shutdown = (): void => {
     console.log("shutting down...");

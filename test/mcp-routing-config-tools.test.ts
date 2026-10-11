@@ -190,7 +190,7 @@ describe("routing config tools over MCP", () => {
 
   async function connect(cfg = config("least-loaded")) {
     running = await startMcpServer({
-      tools: createActionTools({ routingConfig: cfg }),
+      tools: createActionTools({ registry: new Registry(), routingConfig: cfg }),
       port: 0,
     });
     client = new Client({ name: "test-client", version: "0.0.0" });
@@ -203,10 +203,9 @@ describe("routing config tools over MCP", () => {
 
   it("lists both tools", async () => {
     const { client } = await connect();
-    expect((await client.listTools()).tools.map((t) => t.name).sort()).toEqual([
-      "set_routing_strategy",
-      "set_scoring_weights",
-    ]);
+    const listed = (await client.listTools()).tools.map((t) => t.name);
+    expect(listed).toContain("set_routing_strategy");
+    expect(listed).toContain("set_scoring_weights");
   });
 
   it("applies a strategy change through the protocol and flags a bad one as an error", async () => {
