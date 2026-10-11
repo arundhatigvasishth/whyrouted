@@ -76,7 +76,12 @@ function roundLine(round: DecisionRound, i: number): ExplanationLine {
     // `strategy` on this round is the configured name, not one that scored
     // anything (N4), so it is left out of the sentence on purpose.
     const cites = [`${base}.outcome`];
-    let text = `${label}: the registry had no healthy replica.`;
+    // A drained replica can be perfectly healthy, so once any exclusion is an
+    // operator drain the round must not claim the fleet was unhealthy.
+    const drained = round.excluded.some((e) => e.reason === "drained");
+    let text = drained
+      ? `${label}: no replica was available to route to.`
+      : `${label}: the registry had no healthy replica.`;
     const ex = excludedPart(round, base);
     text += ex.text;
     cites.push(...ex.cites);
@@ -133,7 +138,10 @@ function excludedPart(round: DecisionRound, base: string): { text: string; cites
   const cites: string[] = [];
   const items = round.excluded.map((e, k) => {
     cites.push(`${base}.excluded[${k}].replicaId`, `${base}.excluded[${k}].reason`);
-    return `${e.replicaId} (${e.reason})`;
+    // Worded from the recorded reason only. A drain is an operator action,
+    // never a health fault (M5b, P1).
+    const reason = e.reason === "drained" ? "drained by operator" : e.reason;
+    return `${e.replicaId} (${reason})`;
   });
   return { text: ` Excluded: ${items.join(", ")}.`, cites };
 }
