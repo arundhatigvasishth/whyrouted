@@ -26,8 +26,14 @@ An inference-aware load balancer for LLM serving fleets.
   registry state or recorded log data, and the tools say so when there is
   nothing to answer from. See [MCP server](#mcp-server).
 
-No action tools (drain, restore, tuning) and no dashboard yet. Those are M5b
-and M6.
+- **M5b:** five action tools on the same server: `drain_replica`,
+  `restore_replica`, `simulate_failure`, `set_routing_strategy`, and
+  `set_scoring_weights`. A client can take a replica out of rotation, put it
+  back, inject a fault, and retune live routing, and every result says what
+  actually changed. They sit behind a bearer token. See
+  [Action tools](#action-tools).
+
+No dashboard yet. That is M6.
 
 ---
 
@@ -146,6 +152,7 @@ All environment variables are optional; sane defaults are built in.
 | `WR_LOAD_WEIGHT` | `1` | Weight on in-flight count in the latency-weighted score (>= 0) |
 | `WR_LATENCY_WEIGHT` | `1` | Weight on measured latency in the latency-weighted score (>= 0) |
 | `WR_MCP_PORT` | `8090` | Port the MCP server listens on (`POST /mcp`). Must not collide with the status port or the replica range |
+| `WR_MCP_TOKEN` | unset | Bearer token required on every request to `/mcp` when set. At least 16 characters. Without it, the five action tools are only registered on a loopback bind |
 | `WR_MAX_RETRIES` | `2` | Retries `POST /route` makes against the next-best replica on a retryable failure (3 attempts total). `0` disables retry |
 
 ## Fault-injection demo (kill / revive)
@@ -337,16 +344,83 @@ Developer, Edit Config) and restart it:
 }
 ```
 
-The four tools should then appear under the tools menu. A good first
+The four read tools should then appear under the tools menu (nine with the
+action tools, see below). A good first
 conversation: ask it what the fleet looks like, kill a replica with the
 [fault-injection demo](#fault-injection-demo-kill--revive), send a few
 requests through `POST /route`, then ask it what failed and why a specific
 request was routed the way it was.
 
 What has been checked: the SDK's MCP client over HTTP (the M5a integration
-test), and a stdio client reaching the running server through `mcp-remote`,
-which listed all four tools and returned live fleet data. Claude Desktop
-itself has not been run against it yet.
+test), a stdio client reaching the running server through `mcp-remote`, and
+Claude Desktop itself for the read tools (M5a).
+
+### Action tools
+
+| Tool | What it does |
+|---|---|
+| `drain_replica` | Takes `replica_id`. Stops routing new traffic to it. Requests already in flight finish. It stays drained, whatever its health, until restored. |
+| `restore_replica` | Takes `replica_id`. Clears the drain and nothing else, so a replica that is also unhealthy stays out until it recovers, and the result says so. |
+| `simulate_failure` | Takes `replica_id` and an optional `mode`: `kill` (default, fails everything so health checks eject it), `fail_infer` (fails only requests), or `revive` (clears either). Simulated fleets only. |
+| `set_routing_strategy` | Takes `strategy`: `round-robin`, `least-loaded`, or `latency-weighted`. Applies to the next request. |
+| `set_scoring_weights` | Takes `load_weight` and `latency_weight` (both >= 0). Only `latency-weighted` uses them, and the result notes it when another strategy is active. |
+
+Each result carries `before` and `after`, read back from the live store and
+not echoed from your request, plus `changed` (`true`, `false`, or `null` when
+there is no `before` to compare, as for `simulate_failure`). Repeating an
+action is a success with `changed: false`. A failed action (unknown replica,
+bad input, unsupported) is an error and changes nothing. A kill takes about
+1.5 seconds to show as unhealthy, because the health checks have to notice;
+drain, restore, and strategy changes show up on the next request.
+
+A drained replica is reported in `GET /status` and `get_fleet_status` as
+`admin: "drained"`, separately from its `health`, and
+`explain_routing_decision` words it as "drained by operator", never as a
+health fault. Drain, strategy, and weights live in memory and reset on
+restart.
+
+**Authentication.** Set `WR_MCP_TOKEN` (at least 16 characters) and every
+request to `/mcp`, reads included, must send `Authorization: Bearer <token>`,
+or it gets a 401 before anything is parsed. With no token, a loopback bind
+(the default `127.0.0.1`) still serves all nine tools, so the local demo needs
+no setup. On any other bind with no token the five action tools are not
+registered at all, and the startup log says why. This is one shared secret
+over plain HTTP: it is not an audit trail and it is not encrypted, and it only
+guards `/mcp`, not the replicas' own admin endpoints.
+
+For Claude Desktop with a token, pass it through the bridge's environment so it
+stays out of the arguments:
+
+```json
+{
+  "mcpServers": {
+    "whyrouted": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "http://127.0.0.1:8090/mcp",
+        "--allow-http",
+        "--header",
+        "Authorization:${WHYROUTED_AUTH}"
+      ],
+      "env": { "WHYROUTED_AUTH": "Bearer <the WR_MCP_TOKEN value>" }
+    }
+  }
+}
+```
+
+If the token is missing or wrong, Claude Desktop does not show a prompt. The
+bridge treats any 401 as the start of a sign-in flow, tries to register a
+client, is refused, and exits, so the server shows as failed with
+`Dynamic Client Registration rejected (HTTP 401)` in its log. That message
+means "check the token".
+
+Try it without a client:
+
+```
+curl -s -X POST http://127.0.0.1:8090/mcp   -H "authorization: Bearer $WR_MCP_TOKEN"   -H 'content-type: application/json'   -H 'accept: application/json, text/event-stream'   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"drain_replica","arguments":{"replica_id":"replica-2"}}}'
+```
 
 ## Running the fleet standalone
 
@@ -363,7 +437,7 @@ npm run start:fleet
 npm test
 ```
 
-Runs unit tests for every module plus four integration tests, no mocks:
+Runs unit tests for every module plus integration tests, no mocks:
 
 - `test/integration/m1.test.ts` boots the real system as a child process and
   drives the kill/revive arc from the manual demo above, asserting the fleet
@@ -390,6 +464,14 @@ Runs unit tests for every module plus four integration tests, no mocks:
   underlying store, that every `recordIds` list matches real records, and that
   a question the data cannot answer is `no_data` or `invalid_input`, never a
   guess.
+- `test/integration/m5b.test.ts` (in-process) starts the system with the
+  bearer token on and drives all five action tools through the SDK's client
+  over HTTP, checking each effect where it lands: after `drain_replica` no
+  routed request reaches that replica and the change is visible in
+  `get_fleet_status` and `GET /status` within 1s, a post-drain decision is
+  recorded and explained as a drain, a strategy change applies to the very
+  next request, bad input leaves state unchanged, a killed replica fails over
+  with no failed request, and a call with no token gets a 401.
 
 ## Project structure
 
@@ -400,7 +482,7 @@ src/
   decisions/  decision log (per-request routing rationale, queryable by time or request id, M4)
   events/     failover event log (ejections + recoveries, queryable by time)
   health/     health scheduler (hysteresis-based health state machine + eject)
-  mcp/        MCP server, the grounding envelope every tool answers through, and the four read tools (M5a)
+  mcp/        MCP server, the grounding envelope the read tools answer through, the action wrapper, auth, and the nine tools (M5a, M5b)
   registry/   in-memory fleet state store (+ Redis stub for later)
   replica/    simulated replica server, fleet launcher, synthetic load
   routing/    routing engine, strategies, live strategy/weight config
