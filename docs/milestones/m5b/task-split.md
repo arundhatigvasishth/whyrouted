@@ -103,8 +103,8 @@ Arundhati drafts P1 and P4, both review the whole thing.
 |---|---|---|
 | **P1** Drained-state representation | `docs/decisions.md`, `src/registry/types.ts` (signature only) | Resolves the question above. Includes the registry method (`setAdmin(id, state)` or similar), whether the field is on `ReplicaRuntime` or beside it, the new engine `excluded` reason string, and what `/status` shows. |
 | **P2** `/mcp` authentication | `docs/decisions.md`, `src/mcp/auth.ts` (signature only) | Bearer token via `WR_MCP_TOKEN`, the refuse-to-start rule for non-loopback with no token, and what an unauthenticated call returns. Supersedes nothing; resolves M5a deferral 5. |
-| **P3** Action result envelope | `src/mcp/action.ts` (design here) | One shape for all five tools. Something like `ActionResult = { ok: true; changed: boolean; before: S; after: S; appliedAt: string } \| { ok: false; code: "unknown_replica" \| "invalid_input" \| "unauthorized" \| "internal_error"; reason: string }`. `changed: false` is a success (draining an already-drained replica, setting the active strategy). `before` and `after` are read back from the store after the write, not echoed from the arguments, which is what makes PRD §8's "correctly reflected in live fleet state" checkable. |
-| **P4** `simulate_failure` semantics | `src/mcp/tools/simulate-failure.ts` (signature only) | Which fault the tool triggers: `/admin/kill` (health fails, scheduler ejects), `/admin/fail-infer` (only requests fail, request-driven ejection), or a `mode` argument choosing between them. Also: is there a way to undo it from MCP (`/admin/revive`), or does `restore_replica` cover it. The simulated-only boundary matters here: the tool must refuse cleanly on a non-simulated adapter, since PRD §6 says no MCP code changes between phases. |
+| **P3** Action result envelope | `src/mcp/action.ts` (design here) | One shape for all five tools. Something like `ActionResult = { ok: true; changed: boolean; before: S; after: S; appliedAt: string } \| { ok: false; code: "unknown_replica" \| "invalid_input" \| "unauthorized" \| "unsupported" \| "internal_error"; reason: string }`. `changed: false` is a success (draining an already-drained replica, setting the active strategy). `before` and `after` are read back from the store after the write, not echoed from the arguments, which is what makes PRD §8's "correctly reflected in live fleet state" checkable. |
+| **P4** `simulate_failure` semantics | `src/mcp/tools/simulate-failure.ts`, `src/replica/fault-injector.ts` (signatures only) | Which fault the tool triggers: `/admin/kill` (health fails, scheduler ejects), `/admin/fail-infer` (only requests fail, request-driven ejection), or a `mode` argument choosing between them. Also: is there a way to undo it from MCP (`/admin/revive`), or does `restore_replica` cover it. **Where the call lives:** not on `ReplicaAdapter`. `docs/decisions.md` (2026-09-01) fixes that boundary at exactly two functions, and a kill switch only exists on simulated replicas (a real Ollama or vLLM replica has none), so a third adapter method would break the Phase 2 swap. Instead a separate `FaultInjector` interface (`inject(replicaId, mode)` and `clear(replicaId)`), implemented only by the simulated fleet in `src/replica/`. The tool takes an optional `FaultInjector`; when none is wired it returns `unsupported` with a reason, rather than failing or silently doing nothing. |
 
 Also agree: the argument shape of `set_scoring_weights(load_weight,
 latency_weight)` against `ScoringWeights` field names, and whether the two
@@ -118,7 +118,9 @@ The four M5a read tools and their `dispatch` envelope do not change. M5b adds
 a second envelope beside it, it does not widen `ToolResult`. The routing
 strategies' `pick` and `score` signatures do not change; drain is enforced
 in the engine's pre-filter, where `unhealthy` already is, so no strategy sees
-a drained replica. `RegistryStore` stays synchronous (Redis is still M7/M8).
+a drained replica. `RegistryStore` stays synchronous (Redis is still M7/M8). `ReplicaAdapter`
+stays exactly two functions (`docs/decisions.md`, 2026-09-01); fault injection
+is a separate interface, see P4.
 
 ---
 
@@ -128,7 +130,7 @@ a drained replica. `RegistryStore` stays synchronous (Redis is still M7/M8).
 |---|---|---|
 | P5 | **Drained state in the registry** | Implement P1 in `src/registry/registry.ts` (and the Redis stub's signature in `redis.ts`): new field, setter, and its appearance in `getSnapshot()`. The health scheduler is not touched; a test proves a probe cycle leaves a drained replica drained. |
 | P6 | **Engine honors drain** | `src/routing/engine.ts` pre-filter excludes drained replicas with the P1 reason, ahead of strategies. A drained but healthy replica is `excluded`, not a candidate. If every healthy replica is drained, the existing `no_healthy_replicas` path fires and its `excluded` list says why. |
-| P7 | **Decision log and explain wording** | The new exclusion reason flows into `DecisionRound.excluded` unchanged, and `explain_routing_decision` words it as an operator action, not a fault ("drained by operator" versus "unhealthy"). This is the PRD §8 explainability metric applied to the new state: no decision after a drain may be explained as a health problem. |
+| P7 | **Decision log and explain wording** | The new exclusion reason flows into `DecisionRound.excluded` unchanged, and `explain_routing_decision` words it as an operator action, not a fault ("drained by operator" versus "unhealthy"). This is the PRD §8 explainability metric applied to the new state: no decision after a drain may be explained as a health problem. `ExcludedCandidate`'s reason is a closed union of `unhealthy` and `already_tried` (M4 contract, N3), so adding the drain reason widens that type: the same PR updates `docs/milestones/m4/shared-contract.md` N3 and the explain wording tests. |
 | P8 | **`drain_replica(replica_id)`** | `src/mcp/tools/drain-replica.ts`: validates the id, flips the state through P5, reads the replica back, returns the P3 envelope. Unknown id is `unknown_replica`. Already drained is `changed: false`. Refuses to drain the last non-drained healthy replica? Settle in P1: the leading answer is **allow it** (the operator asked, and `no_healthy_replicas` is an honest outcome), with the `after` payload carrying how many replicas remain routable so the client can warn. |
 | P9 | **`restore_replica(replica_id)`** | `src/mcp/tools/restore-replica.ts`: the inverse. Restoring a drained-but-unhealthy replica returns it to `active` and the result says it is still not routable because of health, rather than implying it is back in rotation. |
 | P10 | **Unit tests** | registry setter and snapshot; scheduler does not overwrite; engine excludes drained and reports it; decision log records the reason; explain wording; both tools for known id, unknown id, repeat call, and drained-plus-unhealthy. |
@@ -139,11 +141,11 @@ a drained replica. `RegistryStore` stays synchronous (Redis is still M7/M8).
 
 | # | Task | Deliverable |
 |---|---|---|
-| P11 | **`/mcp` authentication** | `src/mcp/auth.ts` and `WR_MCP_TOKEN` in `src/config.ts`: implement P2. Constant-time token compare, 401 on missing or wrong token, and the startup refusal for action tools on a non-loopback bind with no token. Config tests alongside the existing `config.test.ts` pattern. |
+| P11 | **`/mcp` authentication** | `src/mcp/auth.ts` and `WR_MCP_TOKEN` in `src/config.ts`: implement P2. Constant-time token compare, 401 on missing or wrong token, and the startup refusal for action tools on a non-loopback bind with no token. Config tests alongside the existing `config.test.ts` pattern. Also check early, before P20, that the `mcp-remote` bridge Claude Desktop uses can send the token as an `Authorization` header, since that is the demo path; if it cannot, the auth design has to change before it is built, not after. |
 | P12 | **Action envelope and registration** | `src/mcp/action.ts`: implement P3 as `defineActionTool` beside M5a's `defineTool`, with the same never-rejects guarantee (a throw becomes `internal_error`, the server stays up). `server.ts` registers action tools through it. M5a's rule that the read set is exactly four tools becomes: the read set is still four, the action set is exactly five, and a test pins both. |
 | P13 | **`set_routing_strategy(strategy)`** | `src/mcp/tools/set-routing-strategy.ts`: validates against `STRATEGY_NAMES`, calls `RoutingConfig.setStrategyName`, returns before and after read back from the config. Lists the valid names when it rejects one, as M5a's `query_decisions` does. |
 | P14 | **`set_scoring_weights(load_weight, latency_weight)`** | `src/mcp/tools/set-scoring-weights.ts`: maps to `ScoringWeights`, surfaces `setWeights`' rejection of negative and non-finite values as `invalid_input` rather than `internal_error`. Notes in the result when the active strategy ignores weights (round-robin), so a successful call is not mistaken for an effective one. |
-| P15 | **`simulate_failure(replica_id)`** | `src/mcp/tools/simulate-failure.ts`: per P4, calls the replica's admin endpoint through the adapter boundary (extend `src/adapter/` if the admin call does not exist there yet; MCP code must not call a replica URL directly). Returns which fault was injected. |
+| P15 | **`simulate_failure(replica_id)`** | `src/mcp/tools/simulate-failure.ts` and `src/replica/fault-injector.ts`: per P4, implement the `FaultInjector` for the simulated fleet (it calls the replica's admin endpoints) and have the tool use it. `ReplicaAdapter` is not touched, and MCP code never calls a replica URL directly. Returns which fault was injected, and `unsupported` when no injector is wired. |
 | P16 | **Unit tests** | auth (missing, wrong, right token; the startup refusal); envelope never rejects; the exact-five and exact-four registration test; each of the three tools for the valid case, invalid input, and a no-op repeat. |
 
 ---
@@ -187,7 +189,7 @@ tracks merged.
 |---|---|---|
 | Shared design authoring | P1 drained state + P4 `simulate_failure` semantics | P2 auth + P3 action envelope |
 | Large module | Drained state through registry, engine, decision log, explain (P5 to P7) | Auth plus action envelope and registration (P11, P12) |
-| Medium module | `drain_replica` + `restore_replica` (P8, P9) | `simulate_failure` through the adapter boundary (P15) |
+| Medium module | `drain_replica` + `restore_replica` (P8, P9) | `simulate_failure` through a fault-injection interface (P15) |
 | Small module | (none) | `set_routing_strategy` + `set_scoring_weights` (P13, P14) |
 | Tests | own modules (P10) | own modules (P16) |
 | Joint | P17 to P21, split evenly | same |
@@ -218,7 +220,9 @@ of M5b.
 - `drain_replica` stops new traffic to a replica within 1s, in-flight
   requests are not cut off, the health scheduler does not undo it, and
   `restore_replica` returns the replica to the pool.
-- `simulate_failure` injects a fault through the adapter boundary and the
+- `simulate_failure` injects a fault through the `FaultInjector` interface,
+  leaving `ReplicaAdapter` at two functions, returns `unsupported` when no
+  injector is wired, and the
   fleet fails over as in M3.
 - `set_routing_strategy` and `set_scoring_weights` change live routing, and
   invalid input is rejected without changing state.
