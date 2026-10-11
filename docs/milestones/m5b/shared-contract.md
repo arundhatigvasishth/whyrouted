@@ -254,57 +254,135 @@ _Sources: `src/mcp/server.ts` (`createMcpApp`, `startMcpServer`),
 
 ## P3: Action result envelope
 
-*Junaid to write, same layout. P8, P9, P13, P14, and P15 all return this, so
-it has to be agreed before any of them starts. Start from this sketch and fix
-whatever is wrong:*
+### The call
+
+Actions get their own envelope, `ActionResult`, beside M5a's `ToolResult`.
+The read envelope does not fit: it turns a result with zero records into
+`no_data`, which is right for a read and wrong for an action. `dispatch` and
+`defineTool` do not change.
 
 ```ts
 // src/mcp/action.ts
 export type ActionFailureCode =
   | "unknown_replica"
   | "invalid_input"
-  | "unauthorized"
   | "unsupported"
   | "internal_error";
 
 export type ActionResult<S> =
-  | { ok: true; changed: boolean; before?: S; after: S; appliedAt: string }
+  | {
+      ok: true;
+      /** true or false when `before` is present; null when it is not. */
+      changed: boolean | null;
+      before?: S;
+      after: S;
+      /** ISO 8601. Stamped by the wrapper after the write, never by a tool. */
+      appliedAt: string;
+      /** Advisories the client should see, e.g. "this strategy ignores weights". */
+      notes?: string[];
+    }
   | { ok: false; code: ActionFailureCode; reason: string };
+
+/** What an action handler returns. It never builds an ActionResult itself. */
+export type ActionOutput<S> =
+  | { kind: "applied"; before?: S; after: S; notes?: string[] }
+  | { kind: "unknown_replica" | "invalid_input" | "unsupported"; reason: string };
+
+export type ActionHandler<A, S> = (args: A) => ActionOutput<S> | Promise<ActionOutput<S>>;
+
+export interface ActionOptions {
+  /** Clock for `appliedAt`. Defaults to `() => new Date()`. Tests inject one. */
+  now?: () => Date;
+}
+
+/** Wrap a handler so every call returns an ActionResult and never rejects. */
+export function performAction<A, S>(
+  handler: ActionHandler<A, S>,
+  opts?: ActionOptions,
+): (args: A) => Promise<ActionResult<S>>;
 ```
 
-*Decide and write down:*
+### Rules the wrapper enforces, once, for every action
 
-1. **`before` and `after` come from the store.** `after` is read back after
-   the write, never echoed from the arguments. This is what makes PRD §8's
-   "reflected in live fleet state" checkable. Is `before` required or
-   optional? **Needed for P4:** `simulate_failure` has no way to read a
-   replica's fault state before the call, so I propose `before` is optional on
-   that tool only (see the open question in P4). Your call, but P4 depends on
-   it.
-2. **`changed: false` is a success.** Confirm for: draining a drained replica,
-   restoring an active one, setting the strategy already active, setting the
-   same weights.
-3. **What `S` is per tool.** One line each: drain and restore (`admin`,
-   `health`, and routable count, from P1), strategy (`{ strategy }`), weights
-   (`{ load, latency }` plus whether the active strategy uses them), fault
-   (`FaultState`).
-4. **`appliedAt`.** Stamped by the wrapper after the write, like M5a's
-   `queriedAt`, with an injectable clock for tests.
-5. **Never rejects.** A throw becomes `internal_error` and the server stays
-   up, as M5a's `dispatch` does. Also decide whether `defineActionTool` wraps
-   `dispatch` or stands beside it. The split says beside it; the read tools
-   must not change.
-6. **Mapping to MCP.** M5a's `toCallToolResult` (`server.ts`) sets `isError`
-   for `invalid_input` and `internal_error` only, so `no_data` is not an
-   error. For actions, a failed action is a failed action: decide which codes
-   set `isError` (leading answer: all of them), and whether `unauthorized`
-   ever reaches here given P2 rejects at the transport. Write the mapping as a
-   table.
-7. **Registration.** How `server.ts` accepts action tools beside read tools,
-   and the exact-nine pin (four read, five action) the split calls for.
+- **`after` is read back, not echoed.** A handler writes, then reads the
+  store (registry or routing config) and returns what it read. It never
+  returns the arguments it was given. This is what makes PRD §8's "reflected
+  in live fleet state" checkable, and the integration test asserts it through
+  `get_fleet_status`, not through the action's own answer.
+- **`changed` is derived, not claimed.** When `before` is present the wrapper
+  sets `changed` to whether `before` and `after` differ (deep equality), so a
+  tool cannot report a change that did not happen or hide one that did.
+- **`before` is required for four tools and optional for one.** Drain,
+  restore, set strategy, and set weights always return `before`, read from
+  the store before the write; a test pins this. `simulate_failure` is the one
+  exception: a replica has no state-read endpoint and the admin surface is
+  frozen, so there is no honest prior state to read (answering P4's open
+  question: **optional `before` on that tool only, no `GET /admin/state`**).
+  For it `changed` is **`null`**, meaning "cannot tell", never a guess.
+- **`changed: false` is a success.** Draining a drained replica, restoring an
+  active one, setting the strategy already active, and setting the same
+  weights are all `ok: true` with `changed: false`. A repeat call is not an
+  error and does not reach `internal_error`.
+- **A failed action changed nothing.** `unknown_replica`, `invalid_input`,
+  and `unsupported` are decided before any write. Invalid input leaves the
+  store exactly as it was, and each tool's tests assert that.
+- **`appliedAt` is stamped by the wrapper** after the handler returns, like
+  M5a's `queriedAt`, with an injectable clock.
+- **Never rejects.** A throw, sync or async, becomes `internal_error` with the
+  message as `reason`, and the server stays up.
+- **No `unauthorized` code.** The task split's sketch listed one, but
+  authentication is rejected at the transport (P2) before any tool runs, so no
+  action handler can ever produce it. A code nothing emits invites dead
+  branches, so it is not in the type.
 
-*Sources: `src/mcp/types.ts` (`dispatch`), `src/mcp/server.ts`
-(`defineTool`, `toCallToolResult`), `docs/architecture/m5a.md` §7.*
+### What `S` is per tool
+
+| Tool | `S` | Notes |
+|---|---|---|
+| `drain_replica`, `restore_replica` | `{ replicaId, admin, health, routable, routableReplicas }` | `routable` is `admin === "active" && health === "healthy"`. `routableReplicas` is how many replicas are routable after the change, so a client can warn when it reaches zero. Restoring an unhealthy replica returns `routable: false`, honestly. |
+| `set_routing_strategy` | `{ strategy }` | The strategy name, from `RoutingConfig`. |
+| `set_scoring_weights` | `{ loadWeight, latencyWeight }` | A `notes` entry says when the active strategy does not use weights. |
+| `simulate_failure` | `FaultState` (`{ killed, inferFailing }`) | Exactly what the replica reported (P4). `before` omitted. |
+
+**A correction to the task split on weights.** It says only round-robin
+ignores the scoring weights. In the code only `latency-weighted` reads them
+(`src/routing/strategies/latency-weighted.ts`); `least-loaded` and
+`round-robin` both ignore them. Since `least-loaded` is the default,
+`set_scoring_weights` under default settings succeeds and changes nothing a
+client can see. So the tool adds a `notes` entry whenever the active strategy
+is not `latency-weighted`, stating that the weights are stored but not used
+until it is.
+
+### Mapping to MCP
+
+Same transport as the reads: one text content block holding the whole
+`ActionResult` as JSON. The difference is `isError`, because for an action
+"nothing happened" is not a correct answer the way `no_data` is for a read:
+
+| Result | `isError` |
+|---|---|
+| `ok: true`, any `changed` (`true`, `false`, or `null`) | `false` |
+| `unknown_replica` | `true` |
+| `invalid_input` | `true` |
+| `unsupported` | `true` |
+| `internal_error` | `true` |
+
+### Registration
+
+- `ToolDefinition` (in `server.ts`) gains a `kind: "read" | "action"`.
+  `defineTool` sets `"read"`, so every M5a tool and test is unchanged.
+  `defineActionTool` is the new constructor beside it: it wraps its handler in
+  `performAction` and sets `"action"`. `createMcpServer` maps a result to MCP
+  by `kind`: reads through `toCallToolResult`, actions through a new
+  `toActionCallToolResult` holding the table above.
+- `createReadTools` still returns exactly four. A new `createActionTools`
+  returns exactly five. Tests pin both sets and the nine-name total, and that
+  none of the five action names is ever present on a no-token non-loopback
+  bind (P2).
+
+_Sources: `src/mcp/types.ts` (`dispatch`), `src/mcp/server.ts`
+(`defineTool`, `toCallToolResult`), `src/routing/config.ts`,
+`src/routing/strategies/latency-weighted.ts`, `docs/architecture/m5a.md` §7._
 
 ---
 
